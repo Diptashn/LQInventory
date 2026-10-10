@@ -1,0 +1,18 @@
+{
+  "appName": "LilQuin Kitchen",
+  "version": "1.0.0",
+  "api": {
+    "enabled": false,
+    "baseUrl": null
+  },
+  "features": {
+    "inventory": {
+      "useLocalStorage": true,
+      "allowDemoData": true
+    },
+    "sheetsSync": {
+      "sheetId": "1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA",
+      "enabled": false
+    }
+  }
+}

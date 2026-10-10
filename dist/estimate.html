@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estimate — LilQuin Kitchen</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module" crossorigin src="/assets/app-CPrg_ZFv.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/app-DfGWpdBI.css">
+</head>
+<body class="bg-stone-100 text-stone-800 min-h-screen">
+
+  <header class="bg-white border-b border-stone-200 sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-2 font-semibold text-stone-900">
+        <img src="/assets/logo-C47JIAAB.jpg" alt="LilQuin Kitchen" class="h-8 w-8 rounded">
+        <span>LilQuin Kitchen</span>
+      </a>
+      <nav class="flex gap-1 text-sm">
+        <a href="inventory.html" class="px-3 py-1.5 rounded hover:bg-stone-100">📋 Inventory</a>
+        <a href="estimate.html" class="px-3 py-1.5 rounded bg-stone-100 font-medium">💰 Estimate</a>
+        <a href="sheets.html" class="px-3 py-1.5 rounded hover:bg-stone-100">📊 Sheets Sync</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-8">
+
+    <section class="bg-white rounded-2xl shadow-sm border border-stone-200 p-6 mb-6">
+      <h2 class="text-xl font-semibold text-stone-900 mb-2">Estimate Input</h2>
+      <p class="text-stone-500 text-sm mb-6">Pilih bulan, pilih item, masukkan qty (grams). Stok berkurang otomatis.</p>
+
+      <form id="estimate-form" class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label for="month" class="block text-sm font-medium text-stone-700 mb-1">Bulan</label>
+            <select id="month" name="month" required class="w-full px-3 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-[#b4602e] focus:border-transparent">
+              <option value="">Pilih bulan</option>
+              <option value="1">Januari</option>
+              <option value="2">Februari</option>
+              <option value="3">Maret</option>
+              <option value="4">April</option>
+              <option value="5">Mei</option>
+              <option value="6">Juni</option>
+              <option value="7">Juli</option>
+              <option value="8">Agustus</option>
+              <option value="9">September</option>
+              <option value="10">Oktober</option>
+              <option value="11">November</option>
+              <option value="12">Desember</option>
+            </select>
+          </div>
+          <div>
+            <label for="product_tab" class="block text-sm font-medium text-stone-700 mb-1">Produk</label>
+            <select id="product_tab" name="product_tab" required class="w-full px-3 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-[#b4602e] focus:border-transparent">
+              <option value="">Pilih produk</option>
+              <option value="CAKE 18 CM">CAKE 18 CM</option>
+              <option value="CAKE 20 CM">CAKE 20 CM</option>
+              <option value="CAKE 24 CM">CAKE 24 CM</option>
+              <option value="cupcake 18pcs">cupcake 18pcs</option>
+              <option value="wedding dummy">wedding dummy</option>
+              <option value="LAPSUR">LAPSUR</option>
+              <option value="RAINBOW">RAINBOW</option>
+              <option value="hampers">hampers</option>
+              <option value="ITALIAN">ITALIAN</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label for="item_select" class="block text-sm font-medium text-stone-700 mb-1">Item</label>
+          <select id="item_select" name="item" required class="w-full px-3 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-[#b4602e] focus:border-transparent">
+            <option value="">Pilih item (stok dari Inventory)</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="sm:col-span-2">
+            <label for="qty" class="block text-sm font-medium text-stone-700 mb-1">Qty (grams)</label>
+            <input id="qty" name="qty" type="number" step="0.01" min="0.01" placeholder="Qty (grams)" required class="w-full px-3 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-[#b4602e] focus:border-transparent">
+          </div>
+          <div class="flex items-end">
+            <button type="submit" class="w-full px-5 py-2.5 bg-[#b4602e] text-white font-medium rounded-lg hover:bg-[#8a4520] transition">Submit Estimate</button>
+          </div>
+        </div>
+      </form>
+
+      <div id="estimate-result" class="mt-6 hidden p-4 bg-stone-50 rounded-lg border border-stone-200">
+        <h3 class="font-semibold text-stone-900 mb-2">Result</h3>
+        <pre id="result-content" class="text-sm text-stone-700 whitespace-pre-wrap"></pre>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="text-center text-xs text-stone-400 py-6">
+    LilQuin Kitchen — inventory & estimation
+  </footer>
+
+</body>
+</html>
