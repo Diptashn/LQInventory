@@ -161,7 +161,7 @@ if (window.location.pathname.endsWith('sheets.html')) {
   document.addEventListener('DOMContentLoaded', () => {
     // Sheets sync UI – call Apps Script endpoints directly
     const token = "Lilquin_Inventory_2026";
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbwE_DMAIN-UzZA5_A3YDcQcakF4CJJ-Bd_HvqaI3E2GwZOnk_km3U1sov2BPLbDixeVfg/exec";
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbx6hTgB7FDiwfw0fZcHfBzJgjPuyv4GqaHiP7GqGhZ0yIo8qv_q6qnq06wnudfbfLDmBw/exec";
 
     const tokenStatusEl = document.getElementById('token-status');
     const syncStatusEl = document.getElementById('sync-status');
