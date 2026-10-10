@@ -44,9 +44,9 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
-@app.get("/", response_class=RedirectResponse)
-def root():
-    return RedirectResponse(url="/ui/inventory", status_code=302)
+@app.get("/", response_class=HTMLResponse)
+def root(request: Request):
+    return templates.TemplateResponse(request, "index.html", {"active": "home"})
 
 
 @app.get("/health")

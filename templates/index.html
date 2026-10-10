@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Home — LilQuin Kitchen{% endblock %}
+{% block content %}
+<div class="card" style="text-align:center;">
+  <h2>Welcome to LilQuin Kitchen</h2>
+  <p class="sub">Select a section:</p>
+  <ul style="list-style:none; padding:0;">
+    <li><a href="/ui/inventory" class="btn btn-primary" style="margin:4px; display:inline-block;">📋 Inventory</a></li>
+    <li><a href="/ui/estimate" class="btn btn-primary" style="margin:4px; display:inline-block;">💰 Estimate</a></li>
+    <li><a href="/ui/sheets" class="btn btn-primary" style="margin:4px; display:inline-block;">📊 Sheets Sync</a></li>
+  </ul>
+</div>
+{% endblock %}
