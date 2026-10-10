@@ -13,6 +13,9 @@ dependencies = [
   "google-auth>=2.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["app*"]
+
 [project.optional-dependencies]
 test = [
   "pytest>=8.0",

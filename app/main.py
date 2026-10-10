@@ -40,7 +40,7 @@ class CogsRequest(BaseModel):
 app = FastAPI(title="Cake Inventory")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates = Jinja2Templates(directory=str(BASE_DIR))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
