@@ -13,6 +13,7 @@ from app import database as dbmod
 from app.cogs import compute_cogs
 from app.database import get_db
 from app import sheets as gsheets
+from app import sheets_appscript as gsheets_app
 
 
 class ItemCreate(BaseModel):
@@ -429,29 +430,42 @@ def sheets_status():
 
 @app.post("/api/sheets/sync/sheet-to-db")
 def sheets_sync_to_db(con: sqlite3.Connection = Depends(get_db)):
-    """Pull inventory prices from Google Sheet → local DB."""
-    synced = gsheets.sync_sheet_to_db(con)
-    return {"synced_bahan": len(synced), "sample": dict(list(synced.items())[:5])}
+    """Pull inventory data from Apps Script → local DB.
+
+    The Apps Script returns a flat list of inventory rows. We up‑insert each
+    record, preserving existing IDs where the name matches.
+    """
+    data = gsheets_app.pull_inventory()
+    upserted = 0
+    for rec in data:
+        existing = con.execute("SELECT id FROM inventory WHERE name=?", (rec["name"],)).fetchone()
+        if existing:
+            con.execute(
+                "UPDATE inventory SET unit_cost=?, qty=?, updated_at=? WHERE id=?",
+                (rec.get("unit_cost", 0), rec.get("qty", 0), rec.get("updated_at"), existing[0]),
+            )
+        else:
+            con.execute(
+                "INSERT INTO inventory (name, unit_cost, qty, updated_at) VALUES (?,?,?,?)",
+                (rec.get("name"), rec.get("unit_cost", 0), rec.get("qty", 0), rec.get("updated_at")),
+            )
+        upserted += 1
+    con.commit()
+    return {"synced_bahan": upserted, "sample": data[:5]}
 
 
 @app.post("/api/sheets/sync/db-to-sheet")
 def db_sync_to_sheet(con: sqlite3.Connection = Depends(get_db)):
-    """Push inventory prices from local DB → Google Sheet."""
-    result = gsheets.sync_db_to_sheet(con)
-    # clean stray merges, then apply consistent formatting
-    svc = gsheets._get_service()
-    gsheets.clean_extra_merges(svc, gsheets.SHEET_ID)
-    gsheets.apply_formatting_all(svc, gsheets.SHEET_ID)
-    return result
+    """Push local DB inventory to Apps Script endpoint."""
+    result = gsheets_app.push_inventory(con)
+    return {"appscript_response": result}
 
 
 @app.post("/api/sheets/sync/inventory")
 def inventory_sync(con: sqlite3.Connection = Depends(get_db)):
-    """Push inventory DB rows to a dedicated Inventory Google Sheet.
-    Returns the sheet URL.
-    """
-    url = gsheets.sync_inventory_sheet(con)
-    return {"inventory_sheet_url": url}
+    """Alias for db‑to‑sheet push using Apps Script implementation."""
+    result = gsheets_app.push_inventory(con)
+    return {"appscript_response": result}
 
 
 @app.get("/api/sheets/cogs/{month_num}")

@@ -67,7 +67,7 @@ if (window.location.pathname.endsWith('inventory.html') || window.location.pathn
     // Render items from inventory service
     function renderItems(filter = '') {
       const items = InventoryService.getAll()
-        .filter(item => 
+        .filter(item =>
           item.name.toLowerCase().includes(filter.toLowerCase())
         );
 
@@ -156,10 +156,44 @@ if (window.location.pathname.endsWith('estimate.html')) {
   });
 }
 
-// Placeholder for sheets.html logic
+// Sheets sync logic
 if (window.location.pathname.endsWith('sheets.html')) {
   document.addEventListener('DOMContentLoaded', () => {
-    // TODO: Implement sheets sync status UI
+    // Sheets sync UI – call Apps Script endpoints directly
+    const token = "Lilquin_Inventory_2026";
+    const scriptUrl = "https://script.google.com/macros/s/AKfycbwE_DMAIN-UzZA5_A3YDcQcakF4CJJ-Bd_HvqaI3E2GwZOnk_km3U1sov2BPLbDixeVfg/exec";
+
+    const tokenStatusEl = document.getElementById('token-status');
+    const syncStatusEl = document.getElementById('sync-status');
+    // simple check: fetch with token only – should return error if token missing
+    fetch(`${scriptUrl}?token=${token}`).then(r => r.json()).then(data => {
+        tokenStatusEl.textContent = data.error ? 'Invalid' : 'OK';
+    }).catch(() => { tokenStatusEl.textContent = 'Error'; });
+
+    document.getElementById('sync-s2db').addEventListener('click', async () => {
+        syncStatusEl.textContent = 'Pulling…';
+        const resp = await fetch(`${scriptUrl}?token=${token}&action=getInventory`);
+        const json = await resp.json();
+        if (json.inventory) {
+            syncStatusEl.textContent = `Pulled ${json.inventory.length} rows`;
+        } else {
+            syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`;
+        }
+    });
+
+    document.getElementById('sync-db2s').addEventListener('click', async () => {
+        syncStatusEl.textContent = 'Pushing…';
+        const inventory = InventoryService.getAll();
+        const payload = { inventory };
+        const resp = await fetch(`${scriptUrl}?token=${token}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const json = await resp.json();
+        syncStatusEl.textContent = json.status ? `Pushed ${json.rows || json.inventory?.length || 0} rows` : `Error: ${json.error}`;
+    });
+
     console.log('Sheets page loaded');
   });
 }
@@ -167,10 +201,10 @@ if (window.location.pathname.endsWith('sheets.html')) {
 // Utility to escape HTML to prevent XSS
 function escapeHtml(text) {
   const map = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
+    '&': '&',
+    '<': '<',
+    '>': '>',
+    '"': '"',
     "'": '&#039;'
   };
   return text.replace(/[&<>"']/g, m => map[m]);
