@@ -1,0 +1,592 @@
+# Google Sheets sync for inventory + COGS
+import json, os
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any
+
+import sqlite3
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+# ── paths & config ──────────────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent.parent
+SHEETS_CONFIG = BASE_DIR / "app" / "sheets_bahan.json"  # {"product_tabs": [...], "bahan_sorted": [...]}
+TOKEN_PATH = Path("/opt/data/profiles/developer/google_token.json")  # created by OAuth flow
+
+# ── Google Sheets connection ─────────────────────────────────────────────
+def _get_service():
+    """Return a Sheets API service object (cached per process)."""
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    if not TOKEN_PATH.exists():
+        raise FileNotFoundError(f"Google token not found at {TOKEN_PATH}")
+    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), scopes)
+    return build("sheets", "v4", credentials=creds)
+
+
+# ── Constants from sheet restructuring ──────────────────────────────────
+def _load_config() -> Dict[str, List[str]]:
+    if SHEETS_CONFIG.exists():
+        with open(SHEETS_CONFIG) as f:
+            return json.load(f)
+    return {"product_tabs": [], "bahan_sorted": []}
+
+
+CONFIG = _load_config()
+PRODUCT_TABS: List[str] = CONFIG.get("product_tabs", [])
+BAHAN_SORTED: List[str] = CONFIG.get("bahan_sorted", [])
+
+# Cache of config tab name -> live sheet title, so casing drift in the sheet
+# (e.g. "cupcake 18pcs" vs "CUPCAKE 18 Pcs") does not break A1 notation.
+_TAB_TITLE_CACHE: Optional[Dict[str, str]] = None
+
+
+def resolve_tab_name(svc, sid: str, tab: str) -> Optional[str]:
+    """Return the sheet's real tab title matching `tab` (case/space-insensitive).
+
+    The config file stores hand-typed names; the live sheet may differ in casing
+    ("cupcake 18pcs" -> "CUPCAKE 18 Pcs"). A1 ranges are case-sensitive, so we
+    always resolve to the real title. Returns None when the tab does not exist.
+    """
+    global _TAB_TITLE_CACHE
+    if _TAB_TITLE_CACHE is None:
+        meta = svc.spreadsheets().get(spreadsheetId=sid).execute()
+        _TAB_TITLE_CACHE = {s["properties"]["title"] for s in meta.get("sheets", [])}
+    norm = lambda s: "".join(s.split()).upper()
+    target = norm(tab)
+    for title in _TAB_TITLE_CACHE:
+        if norm(title) == target:
+            return title
+    return None
+
+
+# ── 1. sync sheet → database ─────────────────────────────────────────────
+def sync_sheet_to_db(con: sqlite3.Connection) -> Dict[str, Any]:
+    """
+    Read every product tab in the sheet.
+    For each unique bahan (row col B), record harga_kg (col C) in inventory table
+    and write/update sheet_sync_log (per-product-per-month tracking).
+    Returns dict: {bahan_name: harga_kg} that were synced.
+    """
+    if not PRODUCT_TABS:
+        return {}
+    svc = _get_service()
+    sid = "1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA"
+
+    synced: Dict[str, Any] = {}
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat() + "Z"
+
+    for tab in PRODUCT_TABS:
+        # Read all rows from the tab; each month block = 13 rows (header, colhead, 10 data, blank)
+        r = svc.spreadsheets().values().get(
+            spreadsheetId=sid, range=f"'{tab}'!A1:F200"
+        ).execute()
+        rows = r.get("values", [])
+
+        if not rows or len(rows) < 3:
+            continue
+
+        # Month N (1-indexed) occupies rows:  1 + (N-1)*13  to  13 + (N-1)*13  (1-indexed inclusive)
+        # Data rows within month block are rows 3..12 (1-indexed), i.e. 0-based indices 2..11 from block start
+        # But we just loop all rows, skip headers row 1, and tag month by:
+        #   month_block = (row_index_0based // 13) + 1
+        # where row_index_0based = row_number - 1
+
+        for r_idx_0based, row in enumerate(rows):
+            if len(row) < 3:
+                continue
+            row_1based = r_idx_0based + 1
+            month_block = (r_idx_0based // 13) + 1  # 1..12
+
+            if month_block < 1 or month_block > 12:
+                continue
+
+            # Skip row 1 (month header merged cell) and row 2 (col headers)
+            if row_1based <= 2:
+                continue
+
+            bahan_raw = row[1].strip() if len(row) > 1 else ""
+            # Skip summary rows
+            upper = bahan_raw.upper()
+            if upper in ["TOTAL BAHAN", "ONGKOS PRODUKSI", "TOTAL MODAL", "TOTAL ESTIMASI", "MARGIN", "ESTIMASI AWAL"]:
+                continue
+            if not bahan_raw or upper == "NO.":
+                continue
+
+            bahan_title = bahan_raw.lower().title()
+            if bahan_title not in BAHAN_SORTED:
+                pass  # still record
+
+            # harga_kg in col C (index 2, 0-based)
+            harga_str = row[2].strip() if len(row) > 2 else ""
+            harga_kg = parse_rp(harga_str)
+
+            # Only sync if changed or new
+            key = f"{tab}:{bahan_title}:M{month_block:02d}"
+            existing = con.execute(
+                "SELECT pemakaian_gram, harga_kg, updated_at FROM sheet_sync_log WHERE log_key=?",
+                (key,),
+            ).fetchone()
+
+            if existing and existing[0] == harga_kg and existing[1] == harga_kg:
+                continue  # unchanged
+
+            # Upsert into inventory if not exists
+            cur_item = con.execute(
+                "SELECT id, name, unit_cost FROM inventory WHERE name=?",
+                (bahan_title,),
+            ).fetchone()
+
+            if not cur_item:
+                con.execute(
+                    "INSERT INTO inventory (name, qty, unit_cost, updated_at) VALUES (?, 0, ?, ?)",
+                    (bahan_title, harga_kg, now_iso),
+                )
+                con.execute(
+                    "INSERT INTO sheet_sync_log (log_key, product_tab, bahan_name, month_num, harga_kg, pemakaian_gram, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+                    (key, tab, bahan_title, month_block, harga_kg, now_iso),
+                )
+                synced[bahan_title] = harga_kg
+            else:
+                # Update inventory unit_cost if changed
+                if cur_item["unit_cost"] != harga_kg:
+                    con.execute(
+                        "UPDATE inventory SET unit_cost=?, updated_at=? WHERE name=?",
+                        (harga_kg, now_iso, bahan_title),
+                    )
+                # Upsert sync log
+                con.execute(
+                    "UPDATE sheet_sync_log SET harga_kg=?, pemakaian_gram=?, updated_at=? WHERE log_key=?",
+                    (harga_kg, 0, now_iso, key),
+                )
+                synced[bahan_title] = harga_kg
+
+        con.commit()
+
+    return synced
+
+
+def parse_rp(s: str) -> float:
+    """Parse Indonesian Rupiah like ' Rp 15,000.00 ' -> 15000. Keeps decimals. Guards insane vals."""
+    if not s:
+        return 0.0
+    s = s.strip().replace("Rp", "").replace("RP", "").strip()
+    if not s or s in ["-", "", "#N/A", "-   "]:
+        return 0.0
+    # Rp uses comma = thousand, dot = decimal
+    s = s.replace(",", "")
+    s = s.strip()
+    try:
+        val = float(s)
+        if val > 100_000_000:  # sanity guard (not real price)
+            return 0.0
+        return val
+    except ValueError:
+        return 0.0
+
+
+# ── 2. sync database → sheet ─────────────────────────────────────────────
+def sync_inventory_sheet(con: sqlite3.Connection) -> str:
+    """Push inventory DB rows to a dedicated "Inventory" Google Sheet.
+    Columns: ID, Name, Qty (grams), Harga/KG, Harga/Gr, Product Tab, Updated At (WIB dd/mm/yyyy).
+    Harga/Gr = Harga/KG / 1000 to mirror COGS sheet layout.
+    Returns the sheet URL.
+    """
+    from datetime import timezone as _tz, timedelta as _td
+    WIB = _tz(_td(hours=7))
+
+    def _wib_ddmmyyyy(iso_str: str) -> str:
+        """Convert stored UTC ISO timestamp to WIB dd/mm/yyyy."""
+        try:
+            s = (iso_str or "").replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_tz.utc)
+            return dt.astimezone(WIB).strftime("%d/%m/%Y")
+        except Exception:
+            return iso_str or ""
+
+    svc = _get_service()
+    sid = get_or_create_inventory_sheet(svc)
+    # Prepare values: header + rows
+    header = [["ID", "Name", "Qty (grams)", "Harga/KG", "Harga/Gr", "Updated At"]]
+    rows = []
+    for r in con.execute("SELECT id, name, qty, unit_cost, updated_at FROM inventory").fetchall():
+        harga_kg = float(r[3] or 0)
+        harga_gr = round(harga_kg / 1000.0, 2)
+        rows.append([
+            str(r[0]), r[1], str(r[2]), str(harga_kg), str(harga_gr), _wib_ddmmyyyy(r[4]),
+        ])
+    body = {"valueInputOption": "USER_ENTERED", "data": [{"range": "A1:F1", "values": header}]}
+    # Write header
+    svc.spreadsheets().values().batchUpdate(spreadsheetId=sid, body=body).execute()
+    # Clear old data range
+    svc.spreadsheets().values().clear(spreadsheetId=sid, range="A2:F1000").execute()
+    # Write data starting at A2
+    if rows:
+        data_body = {"valueInputOption": "USER_ENTERED", "data": [{"range": f"A2:F{len(rows)+1}", "values": rows}]}
+        svc.spreadsheets().values().batchUpdate(spreadsheetId=sid, body=data_body).execute()
+    # Return public URL (published link)
+    return f"https://docs.google.com/spreadsheets/d/{sid}"
+
+
+# ── 2b. legacy sync to product tabs (for COGS sheet) ─────────────────────
+SHEET_ID = "1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA"
+
+def sync_db_to_sheet(con: sqlite3.Connection) -> Dict[str, int]:
+    """
+    Read inventory table, write harga_kg+harga_gram to every product tab
+    where a matching bahan name exists. Returns count of cells updated.
+    """
+    if not PRODUCT_TABS:
+        return {}
+    svc = _get_service()
+    sid = "1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA"
+
+    updated = 0
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat() + "Z"
+
+    inventory_rows = con.execute("SELECT id, name, unit_cost, product_tab, updated_at FROM inventory WHERE unit_cost > 0").fetchall()
+
+    for tab in PRODUCT_TABS:
+        real = resolve_tab_name(svc, sid, tab)
+        if not real:
+            continue
+        # First, read current sheet to know row positions
+        r = svc.spreadsheets().values().get(
+            spreadsheetId=sid, range=f"'{real}'!A1:F200"
+        ).execute()
+        rows = r.get("values", [])
+
+        # Build lookup: map bahan name (lowercase) -> its sheet rows (1-indexed).
+        # Deliberately geometry-agnostic: we scan the whole tab and match by the
+        # name in column B, so a change to N_BAHAN / BLOCK_ROWS can never make
+        # us write prices to the wrong row.
+        bahan_positions: Dict[str, List[int]] = {}
+        for r_idx_0based, row in enumerate(rows):
+            if len(row) < 3:
+                continue
+            if r_idx_0based < 2:
+                continue  # month header + column header
+            bahan_raw = row[1].strip() if len(row) > 1 else ""
+            upper = bahan_raw.upper()
+            if upper in ["TOTAL BAHAN", "ONGKOS PRODUKSI", "TOTAL MODAL", "TOTAL ESTIMASI",
+                         "MARGIN", "ESTIMASI AWAL", "NO."]:
+                continue
+            if not bahan_raw:
+                continue
+            bahan_positions.setdefault(bahan_raw.lower(), []).append(r_idx_0based + 1)
+
+        # Now update from inventory
+        for inv in inventory_rows:
+            name = inv[1]
+            harga_kg = round(float(inv[2]), 2)
+            harga_gram = round(harga_kg / 1000, 6)
+            item_tab = inv[3] if inv[3] else None
+            # If item is tagged to a specific product tab, only push there
+            if item_tab and item_tab != tab:
+                continue
+            if name.lower() not in bahan_positions:
+                continue
+            for sheet_row in bahan_positions[name.lower()]:
+                body = {"valueInputOption": "USER_ENTERED", "data": [{"range": f"'{real}'!C{sheet_row}:D{sheet_row}", "values": [[harga_kg, harga_gram]]}]}
+                try:
+                    svc.spreadsheets().values().batchUpdate(spreadsheetId=sid, body=body).execute()
+                    updated += 1
+                except Exception as e:
+                    print(f"Error updating {tab} row {sheet_row}: {e}")
+
+    con.commit()
+    return {"cells_updated": updated}
+
+
+# ── 3. formatting helpers ────────────────────────────────────────────────
+INVENTORY_SHEET_FILE = "/opt/data/profiles/developer/home/workspace/cake-inventory/.inventory_sheet_id"
+INVENTORY_SHEET_TITLE = "Inventory"
+
+
+def _load_inventory_sheet_id() -> str:
+    """Read stored inventory sheet ID from file, or return empty string."""
+    try:
+        with open(INVENTORY_SHEET_FILE, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _store_inventory_sheet_id(sid: str) -> None:
+    """Persist inventory sheet ID for later reuse."""
+    with open(INVENTORY_SHEET_FILE, "w") as f:
+        f.write(sid)
+
+
+def get_or_create_inventory_sheet(svc) -> str:
+    """Return spreadsheetId for the Inventory sheet, creating it if needed."""
+    sid = _load_inventory_sheet_id()
+    if sid:
+        # verify exists
+        try:
+            svc.spreadsheets().get(spreadsheetId=sid, fields="spreadsheetId").execute()
+            return sid
+        except Exception:
+            # maybe deleted, fall through to create
+            pass
+    # create new spreadsheet
+    body = {"properties": {"title": INVENTORY_SHEET_TITLE}}
+    new_sheet = svc.spreadsheets().create(body=body).execute()
+    sid = new_sheet.get("spreadsheetId")
+    _store_inventory_sheet_id(sid)
+    return sid
+
+
+def apply_formatting_all(svc, sid: str) -> None:
+    """Run formatting on every product tab."""
+    for tab in PRODUCT_TABS:
+        apply_formatting(svc, sid, tab)
+
+
+# ── 4. get monthly COGS from sheet ───────────────────────────────────────
+def get_monthly_cogs(con: sqlite3.Connection, month_num: int) -> Optional[Dict[str, Any]]:
+    """
+    Read all product tabs for a given month (1=Januari, ..., 12=Desember).
+    Build rows of [nama_bahan, harga_kg, harga_gram, pemakaian_gram, harga_total]
+    per product tab and return compute_cogs() result per tab + combined totals.
+    month_num: 1=Januari through 12=Desember
+    """
+    if not PRODUCT_TABS:
+        return None
+    svc = _get_service()
+    sid = "1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA"
+
+    from app.cogs import ONGKOS_RATE, compute_cogs as _cc, get_ongkos_rate
+
+    per_tab: Dict[str, Any] = {}
+    combined_rows: List[Dict[str, Any]] = []
+
+    for tab in PRODUCT_TABS:
+        real = resolve_tab_name(svc, sid, tab)  # live title (casing may differ from config)
+        if not real:
+            continue
+        # Month block = BLOCK_ROWS (106): header, col header, 99 bahan, 4 summary, blank.
+        # Read bahan rows only; the 4 summary rows are recomputed, never parsed.
+        block_start = 1 + (month_num - 1) * BLOCK_ROWS   # 1-indexed month-header row
+        start_row = block_start + 2                      # first bahan row
+        end_row = block_start + 1 + N_BAHAN             # last bahan row
+
+        r = svc.spreadsheets().values().get(
+            spreadsheetId=sid, range=f"'{real}'!A{start_row}:F{end_row}"
+        ).execute()
+        rows = r.get("values", [])
+
+        tab_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            if len(row) < 5:
+                continue
+            nama = row[1].strip() if len(row) > 1 else ""
+            upper = nama.upper()
+            if upper in ["TOTAL BAHAN", "ONGKOS PRODUKSI", "TOTAL MODAL", "TOTAL ESTIMASI", "MARGIN", "ESTIMASI AWAL", "NO.", ""]:
+                continue
+            if not nama:
+                continue
+
+            try:
+                harga_kg = parse_rp(row[2]) if len(row) > 2 else 0.0
+                harga_gram = round(harga_kg / 1000, 6)
+                pemakaian = float(row[4]) if len(row) > 4 and row[4] and row[4].strip() else 0.0
+                harga_total = round(harga_gram * pemakaian, 2)
+            except (ValueError, TypeError):
+                continue
+
+            tab_rows.append({
+                "nama_bahan": nama,
+                "harga_kg": harga_kg,
+                "harga_gram": harga_gram,
+                "pemakaian_gram": pemakaian,
+                "harga_total": harga_total,
+            })
+
+        if tab_rows:
+            ongkos_rate = get_ongkos_rate(tab)
+            tab_cogs = _cc(tab_rows, ongkos_rate=ongkos_rate)
+            tab_cogs["product_tab"] = tab
+            tab_cogs["ongkos_rate"] = ongkos_rate
+            per_tab[tab] = tab_cogs
+            combined_rows.extend(tab_rows)
+
+    if not combined_rows:
+        return None
+
+    # Combined COGS across all tabs (using default rate for aggregate)
+    combined = _cc(combined_rows, ongkos_rate=ONGKOS_RATE)
+    month_names = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"]
+    return {
+        "month": month_num,
+        "month_name": month_names[month_num - 1],
+        "per_tab": per_tab,
+        "combined": combined,
+    }
+
+# ── 4. clear estimate item rows from product tabs, keep summary rows ─────
+
+def restructure_month_blocks(con: sqlite3.Connection) -> Dict[str, int]:
+    """Restructure each product tab from 106-row blocks (99 bahan) to 37-row blocks (30 bahan).
+
+    The live sheet currently has 106-row blocks (verified: rows 3-101 = 99 bahan).
+    We need to delete rows 33-101 (69 rows) from each of the 12 month blocks,
+    leaving only 30 bahan rows followed by the 4 summary rows + 1 blank.
+
+    Uses batchUpdate with deleteDimension requests. Processes months in reverse
+    order within each tab so earlier deletions don't shift later indices.
+    """
+    svc = _get_service()
+    results: Dict[str, int] = {}
+    for tab in PRODUCT_TABS:
+        real = resolve_tab_name(svc, SHEET_ID, tab)
+        if not real:
+            results[tab] = 0
+            continue
+        sheet_id = get_sheet_id(svc, SHEET_ID, real)
+        # Build deleteDimension requests: one per month, reverse order
+        delete_requests = []
+        for month in range(12, 0, -1):
+            # Current (old) 106-row block
+            block_start = (month - 1) * OLD_BLOCK_ROWS  # 0-indexed month header
+            # We want to delete rows 33-101 (1-indexed within block) = indices 32-100 (0-indexed)
+            start_idx = block_start + 32
+            end_idx = block_start + 100  # exclusive end = 101
+            delete_requests.append({
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": start_idx,
+                        "endIndex": end_idx,
+                    }
+                }
+            })
+        if delete_requests:
+            svc.spreadsheets().batchUpdate(
+                spreadsheetId=SHEET_ID, body={"requests": delete_requests}
+            ).execute()
+        results[tab] = len(delete_requests)
+    return results
+# Month block geometry for the COGS sheet.
+# Each month block:
+#   row 1        month header (merged A:F), e.g. "JANUARI 2026"
+#   row 2        column headers
+#   rows 3-32    30 bahan rows (data entry area)
+#   rows 33-36   4 summary rows (Total bahan / Ongkos / Total modal / Total Estimasi)
+#   row 37       blank spacer
+# BLOCK_ROWS is the stride from one month header to the next.
+N_BAHAN = 30
+N_SUMMARY = 4             # Total bahan / Ongkos / Total modal / Total Estimasi
+BLOCK_ROWS = N_BAHAN + N_SUMMARY + 3  # 38: 2 headers + 30 bahan + 4 summary + 1 blank
+SUMMARY_OFFSET = 2 + N_BAHAN        # first summary row = block_start + 32
+OLD_BLOCK_ROWS = 106      # Sheet's current layout before restructuring (99 bahan rows)
+MONTH_BG = {"red": 0.706, "green": 0.376, "blue": 0.180}   # #b4602e
+MONTH_TX = {"red": 1.0, "green": 1.0, "blue": 1.0}
+HEAD_BG = {"red": 0.953, "green": 0.886, "blue": 0.827}     # #f3e2d3
+HEAD_TX = {"red": 0.169, "green": 0.129, "blue": 0.094}     # #2b2118
+GRID = {"style": "SOLID", "width": 1,
+        "color": {"red": 0.6, "green": 0.6, "blue": 0.6}}
+RP_FMT = "\"Rp \"#,##0"
+
+
+def _block_requests(sheet_id: int, m: int) -> list:
+    """Formatting requests for month block m (1-based, 12 per tab)."""
+    b = (m - 1) * BLOCK_ROWS          # 0-based month-header row
+    data_end = b + 2 + N_BAHAN + N_SUMMARY  # headers + 99 bahan + 4 summary
+    return [
+        {"mergeCells": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b, "endRowIndex": b + 1,
+            "startColumnIndex": 0, "endColumnIndex": 6}, "mergeType": "MERGE_ALL"}},
+        {"repeatCell": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b, "endRowIndex": b + 1,
+            "startColumnIndex": 0, "endColumnIndex": 6},
+            "cell": {"userEnteredFormat": {
+                "backgroundColor": MONTH_BG,
+                "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
+                "textFormat": {"bold": True, "fontSize": 12,
+                               "foregroundColor": MONTH_TX}}},
+            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}},
+        {"repeatCell": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b + 1, "endRowIndex": b + 2,
+            "startColumnIndex": 0, "endColumnIndex": 6},
+            "cell": {"userEnteredFormat": {
+                "backgroundColor": HEAD_BG,
+                "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE",
+                "textFormat": {"bold": True, "foregroundColor": HEAD_TX}}},
+            "fields": "userEnteredFormat(backgroundColor,horizontalAlignment,verticalAlignment,textFormat)"}},
+        {"repeatCell": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b + 2,
+            "endRowIndex": b + 2 + N_BAHAN,
+            "startColumnIndex": 2, "endColumnIndex": 4},
+            "cell": {"userEnteredFormat": {
+                "numberFormat": {"type": "NUMBER", "pattern": RP_FMT}}},
+            "fields": "userEnteredFormat.numberFormat"}},
+        {"repeatCell": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b + 2, "endRowIndex": data_end,
+            "startColumnIndex": 5, "endColumnIndex": 6},
+            "cell": {"userEnteredFormat": {
+                "numberFormat": {"type": "NUMBER", "pattern": RP_FMT}}},
+            "fields": "userEnteredFormat.numberFormat"}},
+        {"repeatCell": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b + 2 + N_BAHAN,
+            "endRowIndex": data_end,
+            "startColumnIndex": 0, "endColumnIndex": 6},
+            "cell": {"userEnteredFormat": {"textFormat": {"bold": True}}},
+            "fields": "userEnteredFormat.textFormat"}},
+        {"updateBorders": {"range": {
+            "sheetId": sheet_id, "startRowIndex": b, "endRowIndex": data_end,
+            "startColumnIndex": 0, "endColumnIndex": 6},
+            "top": GRID, "bottom": GRID, "left": GRID, "right": GRID,
+            "innerHorizontal": GRID, "innerVertical": GRID}},
+    ]
+
+
+def apply_formatting(svc, sid: str, tab: str) -> None:
+    """Tidy formatting for all 12 month blocks on one product tab."""
+    sheet_id = get_sheet_id(svc, sid, tab)
+    requests: list = []
+    for m in range(1, 13):
+        requests.extend(_block_requests(sheet_id, m))
+    widths = [55, 230, 120, 120, 130, 130]
+    for c, w in enumerate(widths):
+        requests.append({"updateDimensionProperties": {"range": {
+            "sheetId": sheet_id, "dimension": "COLUMNS",
+            "startIndex": c, "endIndex": c + 1},
+            "properties": {"pixelSize": w}, "fields": "pixelSize"}})
+    svc.spreadsheets().batchUpdate(
+        spreadsheetId=sid, body={"requests": requests}).execute()
+
+
+def get_sheet_id(svc, sid: str, tab_name: str) -> int:
+    """Lookup sheetId for tab title (case/space-insensitive)."""
+    real = resolve_tab_name(svc, sid, tab_name)
+    if real is None:
+        raise ValueError(f"Sheet {tab_name} not found")
+    meta = svc.spreadsheets().get(spreadsheetId=sid, fields='sheets.properties').execute()
+    for s in meta['sheets']:
+        if s['properties']['title'] == real:
+            return s['properties']['sheetId']
+    # This should not happen because resolve_tab_name already confirmed existence
+    raise ValueError(f"Sheet {real} not found")
+
+
+def clean_extra_merges(svc, sid: str) -> None:
+    """Remove any merge regions beyond the month header (row1).
+    Keeps only the A1:F1 merge for each tab.
+    """
+    meta = svc.spreadsheets().get(spreadsheetId=sid, fields='sheets.properties.title,sheets.properties.sheetId,sheets.merges').execute()
+    for s in meta['sheets']:
+        title = s['properties']['title']
+        merges = s.get('merges', [])
+        # keep merges where startRowIndex==0 and endRowIndex==1 (first row) and startColumnIndex==0 and endColumnIndex==6
+        keep = [m for m in merges if m.get('startRowIndex')==0 and m.get('endRowIndex')==1 and m.get('startColumnIndex')==0 and m.get('endColumnIndex')==6]
+        if len(keep)!=len(merges):
+            # need to clear all merges then re-add keep
+            batch = {"requests": [{"unmergeCells": {"range": {"sheetId": s['properties']['sheetId']}}}]}
+            svc.spreadsheets().batchUpdate(spreadsheetId=sid, body=batch).execute()
+            if keep:
+                batch = {"requests": [{"mergeCells": {"range": keep[0], "mergeType": "MERGE_ALL"}}]}
+                svc.spreadsheets().batchUpdate(spreadsheetId=sid, body=batch).execute()
+    return None

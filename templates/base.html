@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}LilQuin Kitchen{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><img src="/static/logo.jpg" alt="LilQuin Kitchen" style="height:24px; vertical-align:middle;"/> <span>LilQuin Kitchen</span></div>
+    <nav class="nav">
+        <a href="/ui/inventory" class="nav-link">📋 Inventory</a>
+        <a href="/ui/estimate" class="nav-link">💰 Estimate</a>
+        <a href="/ui/sheets" class="nav-link">📊 Sheets Sync</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

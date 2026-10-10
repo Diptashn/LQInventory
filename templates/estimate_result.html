@@ -1,0 +1,17 @@
+{# HTMX fragment returned by POST /ui/estimate. Swapped into #estimate-result. #}
+{% if error %}
+<div class="card" style="margin-top:12px; border-left:4px solid #c0392b;">
+  <h3>Gagal menyimpan estimate</h3>
+  <p class="sub">{{ error }}</p>
+</div>
+{% else %}
+<div class="card" style="margin-top:12px; border-left:4px solid #27ae60;">
+  <h3>Estimate tersimpan</h3>
+  <p class="sub">
+    {{ item_name }} — {{ tab }} — bulan {{ month_num }} — {{ qty }} g
+  </p>
+  {% if sheet_url %}
+  <p><a href="{{ sheet_url }}" target="_blank">Buka sheet</a></p>
+  {% endif %}
+</div>
+{% endif %}

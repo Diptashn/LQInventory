@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Estimate — LilQuin Kitchen{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Estimate Input</h2>
+  <p class="sub">Pilih bulan, pilih item, masukkan qty (grams). Stok berkurang otomatis.</p>
+
+  <form hx-post="/ui/estimate" hx-target="#estimate-result" hx-swap="afterend">
+    <div class="grid2">
+      <div>
+        <label for="month">Bulan</label>
+        <select id="month" name="month_num" required>
+          {% for m in range(1,13) %}
+          <option value="{{ m }}">{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="product_tab">Produk</label>
+        <select id="product_tab" name="product_tab" required>
+          <option value="CAKE 18 CM">CAKE 18 CM</option>
+          <option value="CAKE 20 CM">CAKE 20 CM</option>
+          <option value="CAKE 24 CM">CAKE 24 CM</option>
+          <option value="cupcake 18pcs">cupcake 18pcs</option>
+          <option value="wedding dummy">wedding dummy</option>
+          <option value="LAPSUR">LAPSUR</option>
+          <option value="RAINBOW">RAINBOW</option>
+          <option value="hampers">hampers</option>
+          <option value="ITALIAN">ITALIAN</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label for="item_select">Item</label>
+      <select id="item_select" name="item_id" required>
+        {% for it in items %}
+        <option value="{{ it.id }}">{{ it.name }} (stok: {{ it.qty }} g)</option>
+        {% endfor %}
+      </select>
+      <input type="number" step="0.01" min="0.01" name="qty" placeholder="Qty (grams)" required style="width:120px;">
+    </div>
+
+    <div style="margin-top:12px;">
+      <button type="submit" class="btn btn-primary">Submit Estimate</button>
+    </div>
+  </form>
+
+
+  <div id="estimate-result" style="margin-top:12px;"></div>
+</div>
+{% endblock %}
