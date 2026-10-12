@@ -242,11 +242,12 @@ if (location.pathname.endsWith('estimate.html')) {
 
         if (!resp.ok) throw new Error(data.error || 'Submit failed');
 
-        resultContentEl.textContent = `✓ ${data.message}\nItem: ${data.row[2]}\nBulan: ${data.row[1]}\nProduk: ${data.row[0]}\nQty: ${data.row[3]} g`;
+        const inv = data.inventory || {};
+        resultContentEl.textContent = `✓ ${data.message}\nItem: ${data.row[2]}\nBulan: ${data.row[1]}\nProduk: ${data.row[0]}\nQty: ${data.row[3]} g\nStok setelah: ${inv.after ?? '—'} g`;
         resultEl.classList.remove('hidden');
         form.reset();
       } catch (err) {
-        resultContentEl.textContent = `✗ Error: ${err.message}`;
+        resultContentEl.textContent = `✗ ${err.message}`;
         resultEl.classList.remove('hidden');
       } finally {
         submitBtn.disabled = false;

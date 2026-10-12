@@ -5,6 +5,7 @@
 // Auth: JWT required.
 
 const { OAuth2Client } = require('google-auth-library');
+const { Client } = require('pg');
 const { requireAuth } = require('./auth');
 
 // Reuse helper functions from export-to-sheet (duplicate for simplicity).
@@ -58,12 +59,20 @@ module.exports = async (req, res) => {
   if (!auth) return;
 
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ success:false, error:'Method not allowed' });
+  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed' });
+
+  // Keep one transaction open across both writes so a Sheets failure rolls back Neon.
+  const client = new Client({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false },
+  });
 
   try {
+    await client.connect();
+
     // Vercel pre-parses JSON bodies into req.body; fallback to raw stream locally
     let body = req.body;
     if (!body) {
@@ -81,21 +90,61 @@ module.exports = async (req, res) => {
     const { month, product_tab, item, qty } = body || {};
     if (!month || !product_tab || !item || qty == null) throw new Error('Missing fields: month, product_tab, item, qty required');
 
+    const usedQty = Number(qty);
+    if (isNaN(usedQty) || usedQty <= 0) throw new Error('Qty must be a positive number');
+
+    // ── 1. Deduct stock from Neon (atomic, guarded against concurrent requests) ──
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'SELECT id, quantity FROM inventory_items WHERE lower(product_name) = $1 FOR UPDATE',
+      [String(item).trim().toLowerCase()]
+    );
+    if (rows.length === 0) throw new Error(`Item "${item}" not found in inventory`);
+    if (rows.length > 1) throw new Error(`Item "${item}" is ambiguous — duplicate rows in inventory`);
+
+    const { id, quantity } = rows[0];
+    const currentQty = Number(quantity);
+    if (currentQty < usedQty) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        error: `Stok tidak cukup: tersedia ${currentQty} g, diminta ${usedQty} g`,
+        available: currentQty,
+        requested: usedQty,
+      });
+    }
+    const newQty = currentQty - usedQty;
+    await client.query(
+      'UPDATE inventory_items SET quantity = $1, updated_at = now() WHERE id = $2',
+      [newQty, id]
+    );
+
+    // ── 2. Write the row to Google Sheets ──
     const accessToken = await getAccessToken();
     const tab = await resolveTabName(accessToken, product_tab);
     const range = encodeURIComponent(`'${tab}'`);
-
-    const row = [new Date().toISOString().split('T')[0], String(month), String(item), Number(qty)];
-    // Append row to the sheet tab
+    const row = [new Date().toISOString().split('T')[0], String(month), String(item), usedQty];
     await sheetsRequest(
       `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}:append?valueInputOption=USER_ENTERED`,
       accessToken,
       { method: 'POST', body: JSON.stringify({ values: [row] }) }
     );
 
-    return res.status(200).json({ success:true, message:'Estimate recorded', row, tab });
+    // ── 3. Commit — both writes succeeded ──
+    await client.query('COMMIT');
+
+    return res.status(200).json({
+      success: true,
+      message: 'Estimate recorded',
+      row,
+      tab,
+      inventory: { name: item, before: currentQty, after: newQty, used: usedQty },
+    });
   } catch (e) {
+    try { await client.query('ROLLBACK'); } catch { /* connection already gone */ }
     console.error('[estimate]', e);
-    return res.status(400).json({ success:false, error:e.message });
+    return res.status(400).json({ success: false, error: e.message });
+  } finally {
+    await client.end().catch(() => {});
   }
 };
