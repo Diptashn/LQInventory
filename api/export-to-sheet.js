@@ -2,87 +2,96 @@
 //
 // GET /api/export-to-sheet
 // Pulls every row from Neon (inventory_items) and writes it to the "Inventory"
-// tab of the COGS spreadsheet. Pure Node — no child processes, no python.
-//
-// Chain: Neon <--this endpoint--> Google Sheets
+// tab of the COGS spreadsheet.
 //
 // Auth: requires a valid JWT (Bearer token or session cookie)
+//
+// Why direct REST instead of the `googleapis` SDK:
+//   `require('googleapis')` pulls in ~500 generated API clients (131 KB index
+//   alone), which blows past Vercel's serverless bundle limit and makes cold
+//   starts time out. `google-auth-library` is tiny and does one job: turn a
+//   refresh_token into an access_token. The Sheets API itself is a couple of
+//   plain REST calls, so we do them directly.
 //
 // Query params:
 //   clear=true|false – clear the target tab before writing (default true)
 //   tab=NAME         – custom tab name (default 'Inventory')
 
 const { Client } = require('pg');
-const { google } = require('googleapis');
+const { OAuth2Client } = require('google-auth-library');
 const { requireAuth } = require('./auth');
 
 // ── config ───────────────────────────────────────────────────────────────
-const SHEET_ID = '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA';
+const SHEET_ID = process.env.GOOGLE_SHEET_ID
+  || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA';
 const DEFAULT_TAB = 'Inventory';
+const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 // ── helpers ──────────────────────────────────────────────────────────────
+
+// Parse a JSON credential blob from the environment, with a local-file
+// fallback so the endpoint stays runnable on this machine during dev.
 function loadJsonFromEnvOrFile(envVar, fallbackPath) {
   const raw = process.env[envVar];
   if (raw) {
     try {
       return JSON.parse(raw);
     } catch (e) {
-      console.warn(`Failed to parse ${envVar} as JSON, falling back to file`);
+      console.warn(`[export-to-sheet] ${envVar} is not valid JSON: ${e.message}`);
     }
   }
   const fs = require('fs');
   return JSON.parse(fs.readFileSync(fallbackPath, 'utf8'));
 }
 
-async function getGoogleAuth() {
-  const raw = process.env.GOOGLE_CLIENT_SECRET_JSON;
-  console.error('[debug] GOOGLE_CLIENT_SECRET_JSON raw length:', raw?.length, 'first 200:', raw?.substring(0, 200));
-  let secret;
-  try {
-    secret = JSON.parse(raw);
-    console.error('[debug] parsed secret keys:', Object.keys(secret));
-  } catch (e) {
-    console.error('[debug] failed to parse GOOGLE_CLIENT_SECRET_JSON:', e.message);
-    secret = null;
-  }
-  if (!secret || !secret.installed) {
-    throw new Error('Invalid GOOGLE_CLIENT_SECRET_JSON: missing .installed field');
-  }
+// Build an authorized OAuth2 client from the client-secret + token env vars.
+async function getAccessToken() {
+  const secretJson = loadJsonFromEnvOrFile(
+    'GOOGLE_CLIENT_SECRET_JSON',
+    '/opt/data/profiles/developer/google_client_secret.json'
+  );
+  // Google files usually nest the app under "installed" or "web"; accept both.
+  const secret = secretJson.installed || secretJson.web || secretJson;
 
   const tokenObj = loadJsonFromEnvOrFile(
     'GOOGLE_TOKEN_JSON',
     '/opt/data/profiles/developer/google_token.json'
   );
 
-  const oauth2Client = new google.auth.OAuth2(
-    secret.client_id,
-    secret.client_secret,
-    'http://localhost' // redirect uri irrelevant for refresh_token grant
-  );
+  const client = new OAuth2Client(secret.client_id, secret.client_secret);
+  client.setCredentials({ refresh_token: tokenObj.refresh_token });
 
-  // If we have a refresh_token, use it; else the tokenObj must already be valid.
-  if (tokenObj.refresh_token) {
-    oauth2Client.setCredentials({ refresh_token: tokenObj.refresh_token });
-    await oauth2Client.refreshAccessToken();
-    return oauth2Client;
-  }
-
-  // No refresh_token: assume tokenObj already has a valid access_token.
-  // Build credentials from tokenObj (access_token, expiry, etc).
-  const creds = google.auth.fromJSON(tokenObj);
-  return creds;
+  const { token } = await client.getAccessToken();
+  return token;
 }
 
-async function getSheetsTab(auth, tabName) {
-  const sheets = google.sheets({ version: 'v4', auth });
-  const meta = await sheets.spreadsheets.get({
-    spreadsheetId: SHEET_ID,
-    fields: 'sheets.properties.title',
+// Thin fetch wrapper that surfaces Google's error text instead of "500".
+async function sheetsRequest(url, accessToken, options = {}) {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
   });
-  const titles = meta.data.sheets.map((s) => s.properties.title);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Sheets API ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return text ? JSON.parse(text) : {};
+}
+
+// Resolve the requested tab to its real (case-preserved) title in the sheet.
+async function resolveTabName(accessToken, tabName) {
+  const meta = await sheetsRequest(
+    `${SHEETS_API}/${SHEET_ID}?fields=sheets.properties.title`,
+    accessToken
+  );
+  const titles = (meta.sheets || []).map((s) => s.properties.title);
   const real = titles.find((t) => t.toLowerCase() === tabName.toLowerCase());
   if (!real) throw new Error(`Tab "${tabName}" not found. Available: ${titles.join(', ')}`);
-  return { sheets, tab: real };
+  return real;
 }
 
 // ── main handler ─────────────────────────────────────────────────────────
@@ -115,44 +124,36 @@ module.exports = async (req, res) => {
     );
 
     // 2. auth to google
-    const auth = await getGoogleAuth();
-    const { sheets, tab } = await getSheetsTab(auth, tabName);
+    const accessToken = await getAccessToken();
+    const tab = await resolveTabName(accessToken, tabName);
+    const range = encodeURIComponent(`'${tab}'`); // quoted tab name for A1 notation
 
-    // 3. clear existing data
+    // 3. clear existing data below the header row
     if (clear) {
-      await sheets.spreadsheets.values.clear({
-        spreadsheetId: SHEET_ID,
-        range: `'${tab}'!A2:G1000`,
-      });
+      await sheetsRequest(
+        `${SHEETS_API}/${SHEET_ID}/values/${range}!A2:G1000:clear`,
+        accessToken,
+        { method: 'POST' }
+      );
     }
 
-    // 4. build + write header
+    // 4. write header + data in a single update (batch keeps it to one call)
     const header = ['ID', 'Entry Date', 'Product Name', 'Quantity', 'Unit Cost', 'Notes', 'Created At'];
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: `'${tab}'!A1:G1`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [header] },
-    });
+    const values = rows.map((r) => [
+      String(r.id),
+      String(r.entry_date),
+      r.product_name,
+      String(r.quantity),
+      String(r.unit_cost),
+      r.notes || '',
+      String(r.created_at),
+    ]);
 
-    // 5. write data rows
-    if (rows.length) {
-      const values = rows.map((r) => [
-        String(r.id),
-        String(r.entry_date),
-        r.product_name,
-        String(r.quantity),
-        String(r.unit_cost),
-        r.notes || '',
-        String(r.created_at),
-      ]);
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: SHEET_ID,
-        range: `'${tab}'!A2:G${values.length + 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values },
-      });
-    }
+    await sheetsRequest(
+      `${SHEETS_API}/${SHEET_ID}/values/${range}!A1:G${values.length + 1}?valueInputOption=USER_ENTERED`,
+      accessToken,
+      { method: 'PUT', body: JSON.stringify({ values: [header, ...values] }) }
+    );
 
     return res.status(200).json({
       success: true,
