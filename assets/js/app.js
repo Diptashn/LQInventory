@@ -1,82 +1,66 @@
 // app.js - Shared client-side logic for LilQuin Kitchen static site
+// Includes JWT auth guards: unauthenticated users are redirected to login.html
 
-// Inventory Service using localStorage
+// ── auth helpers ─────────────────────────────────────────────────────────
+const API_BASE = window.APP_API_BASE || (location.hostname === 'localhost' ? 'http://localhost:8080/api' : 'https://lq-inventory.vercel.app/api');
+
+function getToken()  { return localStorage.getItem('auth_token'); }
+function setToken(t) { if (t) localStorage.setItem('auth_token', t); else localStorage.removeItem('auth_token'); }
+
+function authFetch(url, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const tok = getToken();
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
+  return fetch(url, { ...opts, headers });
+}
+
+// Redirect to login if no valid token (skip on login page itself)
+function requireAuthOrRedirect() {
+  if (location.pathname.endsWith('login.html')) return;
+  const tok = getToken();
+  if (!tok) { location.href = 'login.html'; return false; }
+  return true;
+}
+
+// ── Inventory Service using localStorage ─────────────────────────────────
 const InventoryService = {
   STORAGE_KEY: 'lilquin-inventory',
 
-  getAll() {
-    const data = localStorage.getItem(this.STORAGE_KEY);
-    return data ? JSON.parse(data) : [];
-  },
-
-  saveAll(items) {
-    localStorage.setItem(this.STORAGE_KEY, JSON.stringify(items));
-  },
+  getAll()   { const d = localStorage.getItem(this.STORAGE_KEY); return d ? JSON.parse(d) : []; },
+  saveAll(i) { localStorage.setItem(this.STORAGE_KEY, JSON.stringify(i)); },
 
   add(item) {
     const items = this.getAll();
-    const newItem = {
-      id: Date.now() + Math.floor(Math.random() * 10000), // simple unique ID
-      ...item,
-    };
+    const newItem = { id: Date.now() + Math.floor(Math.random() * 10000), ...item };
     items.push(newItem);
     this.saveAll(items);
     return newItem;
   },
-
-  remove(id) {
-    const items = this.getAll().filter(item => item.id !== id);
-    this.saveAll(items);
-  },
-
+  remove(id) { this.saveAll(this.getAll().filter(i => i.id !== id)); },
   update(id, updates) {
-    const items = this.getAll().map(item => {
-      if (item.id === id) {
-        return { ...item, ...updates };
-      }
-      return item;
-    });
-    this.saveAll(items);
+    this.saveAll(this.getAll().map(item => item.id === id ? { ...item, ...updates } : item));
   },
 };
 
-// Helper to format currency (Indonesian Rupiah)
+// ── formatting / cost helpers ───────────────────────────────────────────
 function formatCurrency(amount) {
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount);
+  return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount);
 }
+function hargaPerGram(hargaKg) { return (hargaKg / 1000).toFixed(2); }
 
-// Helper to calculate harga/gram from harga/kg
-function hargaPerGram(hargaKg) {
-  return (hargaKg / 1000).toFixed(2);
-}
-
-// Page-specific logic
-if (window.location.pathname.endsWith('inventory.html') || window.location.pathname === '/' && window.location.pathname.includes('inventory')) {
-  // Inventory page logic
+// ── Inventory page ───────────────────────────────────────────────────────
+if (location.pathname.endsWith('inventory.html') || location.pathname === '/' || (location.pathname.endsWith('.html') === false && location.pathname.includes('inventory'))) {
   document.addEventListener('DOMContentLoaded', () => {
-    const form = document.getElementById('add-form');
+    if (!requireAuthOrRedirect()) return;
+
+    const form      = document.getElementById('add-form');
     const itemsBody = document.getElementById('items-body');
     const emptyState = document.getElementById('empty-state');
     const searchInput = document.getElementById('search');
 
-    // Render items from inventory service
     function renderItems(filter = '') {
-      const items = InventoryService.getAll()
-        .filter(item =>
-          item.name.toLowerCase().includes(filter.toLowerCase())
-        );
-
-      if (items.length === 0) {
-        emptyState.classList.remove('hidden');
-        itemsBody.innerHTML = '';
-        return;
-      }
-
+      const items = InventoryService.getAll().filter(i => i.name.toLowerCase().includes(filter.toLowerCase()));
+      if (!items.length) { emptyState.classList.remove('hidden'); itemsBody.innerHTML = ''; return; }
       emptyState.classList.add('hidden');
       itemsBody.innerHTML = items.map(item => `
         <tr>
@@ -89,33 +73,22 @@ if (window.location.pathname.endsWith('inventory.html') || window.location.pathn
             <button class="edit-btn px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600" data-id="${item.id}">Edit</button>
             <button class="delete-btn px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600" data-id="${item.id}">Hapus</button>
           </td>
-        </tr>
-      `).join('');
+        </tr>`).join('');
 
-      // Attach event listeners to buttons
       document.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-          // IDs may be numeric (local) or UUID strings (pulled from Neon) —
-          // do NOT parseInt, that yields NaN for UUIDs.
-          const id = e.target.dataset.id;
-          if (confirm('Hapus bahan ini?')) {
-            InventoryService.remove(id);
-            renderItems(searchInput.value);
-          }
+          const id = e.target.dataset.id;   // UUID or numeric string – never parseInt
+          if (confirm('Hapus bahan ini?')) { InventoryService.remove(id); renderItems(searchInput.value); }
         });
       });
-
       document.querySelectorAll('.edit-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
           const id = e.target.dataset.id;
           const item = InventoryService.getAll().find(i => String(i.id) === String(id));
           if (!item) return;
-
-          // Prompt for new values (simple prompt for demo)
           const name = prompt('Nama bahan:', item.name) || item.name;
-          const qty = parseFloat(prompt('Qty (grams):', item.qty)) || item.qty;
+          const qty  = parseFloat(prompt('Qty (grams):', item.qty)) || item.qty;
           const unit_cost = parseFloat(prompt('Harga /kg (Rp):', item.unit_cost)) || item.unit_cost;
-
           if (name !== null && !isNaN(qty) && !isNaN(unit_cost)) {
             InventoryService.update(id, { name, qty: parseFloat(qty), unit_cost: parseFloat(unit_cost) });
             renderItems(searchInput.value);
@@ -124,72 +97,55 @@ if (window.location.pathname.endsWith('inventory.html') || window.location.pathn
       });
     }
 
-    // Handle form submission
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const name = form.name.value.trim();
       const qty = parseFloat(form.qty.value);
       const unit_cost = parseFloat(form.unit_cost.value);
-
       if (name && !isNaN(qty) && !isNaN(unit_cost) && qty > 0 && unit_cost > 0) {
         InventoryService.add({ name, qty, unit_cost, updated_at: new Date().toISOString() });
         form.reset();
         renderItems(searchInput.value);
-      } else {
-        alert('Mohon isi semua field dengan nilai yang valid');
-      }
+      } else { alert('Mohon isi semua field dengan nilai yang valid'); }
     });
 
-    // Handle search
-    searchInput.addEventListener('input', (e) => {
-      renderItems(e.target.value);
-    });
-
-    // Initial render
+    searchInput.addEventListener('input', (e) => renderItems(e.target.value));
     renderItems('');
   });
 }
 
-// Placeholder for estimate.html logic
-if (window.location.pathname.endsWith('estimate.html')) {
+// ── Estimate page ────────────────────────────────────────────────────────
+if (location.pathname.endsWith('estimate.html')) {
   document.addEventListener('DOMContentLoaded', () => {
-    // TODO: Implement estimate logic using localStorage or API
+    if (!requireAuthOrRedirect()) return;
     console.log('Estimate page loaded');
   });
 }
 
-// Sheets sync logic
-if (window.location.pathname.endsWith('sheets.html')) {
+// ── Sheets sync page ─────────────────────────────────────────────────────
+if (location.pathname.endsWith('sheets.html')) {
   document.addEventListener('DOMContentLoaded', () => {
-    // Vercel API base – replace the dead Apps Script URL
-    const API_BASE = "https://lq-inventory.vercel.app/api";
+    if (!requireAuthOrRedirect()) return;
 
     const tokenStatusEl = document.getElementById('token-status');
-    const syncStatusEl = document.getElementById('sync-status');
+    const syncStatusEl  = document.getElementById('sync-status');
 
-    // --- connection check: a plain GET /api/items is our health probe now ---
-    fetch(`${API_BASE}/items`)
+    // --- token/health check ---
+    authFetch(`${API_BASE}/items`)
       .then(r => r.json())
       .then(data => {
-        if (typeof data.count === 'number') {
-          tokenStatusEl.textContent = 'OK';
-        } else {
-          tokenStatusEl.textContent = 'Invalid';
-        }
+        if (typeof data.count === 'number') tokenStatusEl.textContent = 'OK';
+        else { tokenStatusEl.textContent = 'Invalid'; syncStatusEl.textContent = data.error || 'auth required'; }
       })
-      .catch(() => { tokenStatusEl.textContent = 'Error'; });
+      .catch(() => { tokenStatusEl.textContent = 'Error'; syncStatusEl.textContent = 'Connection failed'; });
 
     // --- PULL: Neon -> localStorage ---
     document.getElementById('sync-s2db').addEventListener('click', async () => {
       syncStatusEl.textContent = 'Pulling…';
       try {
-        const resp = await fetch(`${API_BASE}/items`);
+        const resp = await authFetch(`${API_BASE}/items`);
         const json = await resp.json();
-        if (!json.data) {
-          syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`;
-          return;
-        }
-        // Map DB column names -> localStorage item shape
+        if (!json.data) { syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`; return; }
         const mapped = json.data.map(row => ({
           id: row.id,
           name: row.product_name,
@@ -199,42 +155,55 @@ if (window.location.pathname.endsWith('sheets.html')) {
         }));
         InventoryService.saveAll(mapped);
         syncStatusEl.textContent = `Pulled ${mapped.length} rows (${json.count} from server)`;
-      } catch (err) {
-        syncStatusEl.textContent = `Error: ${err.message}`;
-      }
+      } catch (err) { syncStatusEl.textContent = `Error: ${err.message}`; }
     });
 
-    // --- PUSH: localStorage → Neon (one POST per row) ---
+    // --- PUSH: localStorage -> Neon -> Google Sheets ---
     document.getElementById('sync-db2s').addEventListener('click', async () => {
-      syncStatusEl.textContent = 'Pushing to sheet…';
+      syncStatusEl.textContent = 'Pushing…';
+
+      // Phase 1: push each local item to Neon (one POST per row)
+      const items = InventoryService.getAll();
+      let pushed = 0;
+      for (const item of items) {
+        try {
+          const resp = await authFetch(`${API_BASE}/items`, {
+            method: 'POST',
+            body: JSON.stringify({
+              entry_date: item.updated_at || new Date().toISOString().split('T')[0],
+              product_name: item.name,
+              quantity: Number(item.qty) || 0,
+              unit_cost: Number(item.unit_cost) || 0,
+              notes: '',
+            }),
+          });
+          if (resp.ok) pushed++;
+        } catch { /* keep going, count successes */ }
+      }
+
+      // Phase 2: export Neon data to Google Sheets
       try {
-        const resp = await fetch(`${API_BASE}/export-to-sheet`, {
-          method: 'GET', // simple GET triggers server‑side export
-        });
-        const json = await resp.json();
-        if (!json.success) {
-          syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`;
-          return;
-        }
-        syncStatusEl.textContent = `Exported ${json.rows} rows to Google Sheet`;
+        const exportResp = await authFetch(`${API_BASE}/export-to-sheet`, { method: 'GET' });
+        const exportJson = await exportResp.json();
+        if (!exportJson.success) throw new Error(exportJson.error || 'export failed');
+        syncStatusEl.textContent = `Pushed ${pushed}/${items.length} to Neon, exported ${exportJson.rows} rows to Google Sheet`;
       } catch (err) {
-        syncStatusEl.textContent = `Error: ${err.message}`;
+        syncStatusEl.textContent = `Pushed ${pushed}/${items.length} to Neon. Sheet export error: ${err.message}`;
       }
     });
 
-
-    console.log('Sheets page loaded');
+    // --- logout ---
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) logoutBtn.addEventListener('click', async () => {
+      await fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' });
+      setToken(null);
+      location.href = 'login.html';
+    });
   });
 }
 
-// Utility to escape HTML to prevent XSS
+// ── utility ──────────────────────────────────────────────────────────────
 function escapeHtml(text) {
-  const map = {
-    '&': '&',
-    '<': '<',
-    '>': '>',
-    '"': '"',
-    "'": '&#039;'
-  };
+  const map = { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#039;' };
   return text.replace(/[&<>"']/g, m => map[m]);
 }

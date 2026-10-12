@@ -4,17 +4,17 @@
 // Pulls every row from Neon (inventory_items) and writes it to the "Inventory"
 // tab of the COGS spreadsheet. Pure Node — no child processes, no python.
 //
-// Chain: Neon  <--this endpoint-->  Google Sheets
+// Chain: Neon <--this endpoint--> Google Sheets
 //
-// Auth: we accept either:
-//   (a) Files on disk (dev): /opt/data/profiles/developer/google_*.json
-//   (b) Vercel env vars: GOOGLE_CLIENT_SECRET_JSON, GOOGLE_TOKEN_JSON
+// Auth: requires a valid JWT (Bearer token or session cookie)
 //
-// The desktop OAuth token includes a refresh_token, so we can mint a fresh
-// access token with the client secret.
+// Query params:
+//   clear=true|false – clear the target tab before writing (default true)
+//   tab=NAME         – custom tab name (default 'Inventory')
 
 const { Client } = require('pg');
-const { google } = require('googleapis');
+const google = require('googleapis');
+const { requireAuth } = require('./auth');
 
 // ── config ───────────────────────────────────────────────────────────────
 const SHEET_ID = '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA';
@@ -78,6 +78,10 @@ async function getSheetsTab(auth, tabName) {
 
 // ── main handler ─────────────────────────────────────────────────────────
 module.exports = async (req, res) => {
+  // Auth guard – requires a valid JWT
+  const auth = requireAuth(req, res);
+  if (!auth) return; // 401 already sent
+
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');

@@ -34,6 +34,17 @@ begin
   end if;
 end
 $$;
+
+-- users table for authentication
+create table if not exists users (
+  id             uuid primary key default gen_random_uuid(),
+  username       text unique not null,
+  password_hash  text not null,
+  created_at     timestamptz not null default now()
+);
+
+-- Index on username for faster login lookups
+create index if not exists idx_users_username on users (username);
 `;
 
 const client = new Client({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
