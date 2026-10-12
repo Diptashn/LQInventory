@@ -292,6 +292,103 @@ if (location.pathname.endsWith('sheets.html')) {
   });
 }
 
+// ── Admin page (super admin only) ────────────────────────────────────────
+if (location.pathname.endsWith('admin.html')) {
+  document.addEventListener('DOMContentLoaded', async () => {
+    if (!requireAuthOrRedirect()) return;
+
+    // Decode JWT payload to check super-admin
+    const token = getToken();
+    let payload = null;
+    try {
+      payload = JSON.parse(atob(token.split('.')[1]));
+    } catch { /* ignore */ }
+
+    const isSuper = payload?.username === 'dipta';
+    if (!isSuper) {
+      document.body.innerHTML = '<div class="max-w-md mx-auto mt-20 p-6 bg-red-50 border border-red-200 rounded-lg text-center"><h2 class="text-red-800 font-bold mb-2">🚫 Akses Ditolak</h2><p class="text-red-600">Hanya super admin (dipta) yang dapat mengakses halaman ini.</p><a href="index.html" class="mt-4 inline-block text-blue-600 hover:underline">Kembali ke Dashboard</a></div>';
+      return;
+    }
+
+    document.getElementById('nav-user').textContent = `👑 ${payload.username}`;
+
+    async function loadUsers() {
+      try {
+        const res = await authFetch(`${API_BASE}/users`);
+        if (!res.ok) throw new Error(`GET /users ${res.status}`);
+        const { data } = await res.json();
+        const tbody = document.getElementById('users-body');
+        if (!data.length) {
+          tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-stone-500">Belum ada user</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.map(u => `
+          <tr>
+            <td class="p-3 font-mono">${escapeHtml(u.username)}</td>
+            <td class="p-3">${new Date(u.created_at).toLocaleDateString('id-ID')}</td>
+            <td class="p-3">
+              ${u.username !== 'dipta' ? `
+                <button class="delete-user-btn px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600" data-username="${escapeHtml(u.username)}">Hapus</button>
+              ` : '<span class="text-stone-400 text-xs">(super admin)</span>'}
+            </td>
+          </tr>
+        `).join('');
+
+        document.querySelectorAll('.delete-user-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const username = btn.dataset.username;
+            if (!confirm(`Hapus user "${username}"?`)) return;
+            try {
+              const res = await authFetch(`${API_BASE}/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+              if (!res.ok) throw new Error(`DELETE ${res.status}`);
+              loadUsers();
+            } catch (e) { alert('Gagal hapus: ' + e.message); }
+          });
+        });
+      } catch (e) {
+        document.getElementById('users-body').innerHTML = `<tr><td colspan="3" class="p-4 text-center text-red-600">Gagal memuat: ${e.message}</td></tr>`;
+      }
+    }
+
+    document.getElementById('add-user-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('new-username').value.trim();
+      const password = document.getElementById('new-password').value;
+      const msgEl = document.getElementById('add-user-msg');
+      const btn = e.target.querySelector('button');
+
+      if (!username || !password) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Membuat…';
+      msgEl.classList.add('hidden');
+
+      try {
+        const res = await authFetch(`${API_BASE}/register`, {
+          method: 'POST',
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Gagal');
+        msgEl.textContent = `✓ User "${username}" dibuat`;
+        msgEl.className = 'text-sm text-green-600';
+        msgEl.classList.remove('hidden');
+        e.target.reset();
+        loadUsers();
+      } catch (err) {
+        msgEl.textContent = `✗ ${err.message}`;
+        msgEl.className = 'text-sm text-red-600';
+        msgEl.classList.remove('hidden');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create User';
+      }
+    });
+
+    loadUsers();
+  });
+}
+
 // ── global logout (any page with #logoutBtn) ────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   const logoutBtn = document.getElementById('logoutBtn');
