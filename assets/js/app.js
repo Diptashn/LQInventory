@@ -302,10 +302,12 @@ if (location.pathname.endsWith('admin.html')) {
     if (!requireAuthOrRedirect()) return;
 
     // Decode JWT payload to check super-admin
+    // Custom JWT format: body.signature (2 parts). Body is base64url encoded JSON with {sub, username, exp}
     const token = getToken();
     let payload = null;
     try {
-      payload = JSON.parse(atob(token.split('.')[1]));
+      const body = token.split('.')[0];  // payload is FIRST part (not second)
+      payload = JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/')));
     } catch { /* ignore */ }
 
     const isSuper = payload?.username === 'dipta';
