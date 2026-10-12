@@ -126,9 +126,10 @@ module.exports = async (req, res) => {
 
       // NOTE: reading cell values lives under /values/{range}, NOT the
       // spreadsheets.get endpoint (which only returns sheet metadata).
+      // Valid dateTimeRenderOption: SERIAL_NUMBER or FORMATTED_STRING
       const quotedTab = encodeURIComponent(`'${tab}'`);
       const data = await sheetsRequest(
-        `${SHEETS_API}/${SHEET_ID}/values/${quotedTab}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIALIZE`,
+        `${SHEETS_API}/${SHEET_ID}/values/${quotedTab}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`,
         accessToken
       );
       const values = data.values || [];
