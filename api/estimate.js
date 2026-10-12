@@ -139,8 +139,8 @@ module.exports = async (req, res) => {
     }
     const targetRow = insertIdx + 1; // Sheets rows are 1-indexed
     const range = encodeURIComponent(`'${tab}'!A${targetRow}:E${targetRow}`);
-    // Build row: A=ID, B=NAMA BAHAN, C=HARGA/KG, D= (empty for HARGA/GRAM), E=PEMAKAIAN
-    const row = [String(id), String(product_name), String(unit_cost), "", usedQty];
+    // Build row: A=ID, B=NAMA BAHAN, C=HARGA/KG, D==C{row}/1000, E=PEMAKAIAN
+    const row = [String(id), String(product_name), String(unit_cost), `=C${targetRow}/1000`, usedQty];
     await sheetsRequest(
       `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}?valueInputOption=USER_ENTERED`,
       accessToken,
