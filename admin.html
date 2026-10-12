@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🛡️ Admin – LQInventory</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="/assets/js/app.js"></script>
+</head>
+<body class="min-h-screen bg-stone-50">
+  <!-- Navigation -->
+  <nav class="bg-stone-900 text-white px-4 py-3 flex justify-between items-center">
+    <a href="index.html" class="text-xl font-bold">🐴 LQInventory</a>
+    <div class="flex items-center space-x-4">
+      <span id="nav-user" class="text-sm opacity-80"></span>
+      <a href="index.html" class="px-3 py-1 rounded hover:bg-stone-700 text-sm">Dashboard</a>
+      <a href="inventory.html" class="px-3 py-1 rounded hover:bg-stone-700 text-sm">Inventory</a>
+      <a href="estimate.html" class="px-3 py-1 rounded hover:bg-stone-700 text-sm">Estimate</a>
+      <a href="sheets.html" class="px-3 py-1 rounded hover:bg-stone-700 text-sm">Sheets</a>
+      <button id="logoutBtn" class="px-3 py-1 bg-red-600 rounded hover:bg-red-700 text-sm">Logout</button>
+    </div>
+  </nav>
+
+  <main class="max-w-3xl mx-auto px-4 py-8">
+    <h1 class="text-2xl font-bold mb-6">🛡️ Admin Panel (Super Admin Only)</h1>
+
+    <!-- Add User Form -->
+    <section class="bg-white rounded-lg shadow p-6 mb-8">
+      <h2 class="text-lg font-semibold mb-4">Add New User</h2>
+      <form id="add-user-form" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-stone-700 mb-1">Username</label>
+          <input type="text" id="new-username" required
+                 class="w-full px-3 py-2 border border-stone-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 placeholder="newuser">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-stone-700 mb-1">Password</label>
+          <input type="password" id="new-password" required
+                 class="w-full px-3 py-2 border border-stone-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                 placeholder="••••••••">
+        </div>
+        <button type="submit"
+                class="w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition disabled:opacity-50">
+          Create User
+        </button>
+        <p id="add-user-msg" class="text-sm hidden"></p>
+      </form>
+    </section>
+
+    <!-- Users List -->
+    <section class="bg-white rounded-lg shadow p-6">
+      <h2 class="text-lg font-semibold mb-4">Existing Users</h2>
+      <div id="users-list" class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-stone-500 border-b">
+              <th class="p-3">Username</th>
+              <th class="p-3">Created</th>
+              <th class="p-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-body" class="divide-y divide-stone-100">
+            <tr><td colspan="3" class="p-4 text-center text-stone-500">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // Super-admin guard: only 'dipta' can access
+    document.addEventListener('DOMContentLoaded', async () => {
+      if (!requireAuthOrRedirect()) return;
+
+      const token = getToken();
+      let payload = null;
+      try {
+        const parts = token.split('.');
+        payload = JSON.parse(atob(parts[1]));
+      } catch { /* ignore */ }
+
+      const isSuper = payload?.username === 'dipta';
+      if (!isSuper) {
+        document.body.innerHTML = '<div class="max-w-md mx-auto mt-20 p-6 bg-red-50 border border-red-200 rounded-lg text-center"><h2 class="text-red-800 font-bold mb-2">🚫 Akses Ditolak</h2><p class="text-red-600">Hanya super admin (dipta) yang dapat mengakses halaman ini.</p><a href="index.html" class="mt-4 inline-block text-blue-600 hover:underline">Kembali ke Dashboard</a></div>';
+        return;
+      }
+
+      // Show username in nav
+      document.getElementById('nav-user').textContent = `👑 ${payload.username}`;
+
+      // Load users list
+      async function loadUsers() {
+        try {
+          const res = await authFetch(`${API_BASE}/users`);
+          if (!res.ok) throw new Error(`GET /users ${res.status}`);
+          const { data } = await res.json();
+          const tbody = document.getElementById('users-body');
+          if (!data.length) {
+            tbody.innerHTML = '<tr><td colspan="3" class="p-4 text-center text-stone-500">Belum ada user</td></tr>';
+            return;
+          }
+          tbody.innerHTML = data.map(u => `
+            <tr>
+              <td class="p-3 font-mono">${escapeHtml(u.username)}</td>
+              <td class="p-3">${new Date(u.created_at).toLocaleDateString('id-ID')}</td>
+              <td class="p-3">
+                ${u.username !== 'dipta' ? `
+                  <button class="delete-user-btn px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600" data-username="${escapeHtml(u.username)}">Hapus</button>
+                ` : '<span class="text-stone-400 text-xs">(super admin)</span>'}
+              </td>
+            </tr>
+          `).join('');
+
+          document.querySelectorAll('.delete-user-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const username = btn.dataset.username;
+              if (!confirm(`Hapus user "${username}"?`)) return;
+              try {
+                const res = await authFetch(`${API_BASE}/users/${encodeURIComponent(username)}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error(`DELETE ${res.status}`);
+                loadUsers();
+              } catch (e) { alert('Gagal hapus: ' + e.message); }
+            });
+          });
+        } catch (e) {
+          document.getElementById('users-body').innerHTML = `<tr><td colspan="3" class="p-4 text-center text-red-600">Gagal memuat: ${e.message}</td></tr>`;
+        }
+      }
+
+      // Add user form
+      document.getElementById('add-user-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('new-username').value.trim();
+        const password = document.getElementById('new-password').value;
+        const msgEl = document.getElementById('add-user-msg');
+        const btn = e.target.querySelector('button');
+
+        if (!username || !password) return;
+
+        btn.disabled = true;
+        btn.textContent = 'Membuat…';
+        msgEl.classList.add('hidden');
+
+        try {
+          const res = await authFetch(`${API_BASE}/register`, {
+            method: 'POST',
+            body: JSON.stringify({ username, password })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Gagal');
+          msgEl.textContent = `✓ User "${username}" dibuat`;
+          msgEl.className = 'text-sm text-green-600';
+          msgEl.classList.remove('hidden');
+          e.target.reset();
+          loadUsers();
+        } catch (err) {
+          msgEl.textContent = `✗ ${err.message}`;
+          msgEl.className = 'text-sm text-red-600';
+          msgEl.classList.remove('hidden');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Create User';
+        }
+      });
+
+      loadUsers();
+    });
+  </script>
+</body>
+</html>

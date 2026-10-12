@@ -42,7 +42,7 @@ module.exports = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = sign({ sub: user.id });
+    const token = sign({ sub: user.id, username: user.username });
 
     // Set the session cookie header so the browser will send it automatically
     res.setHeader('Set-Cookie', `session=${token}; HttpOnly; Secure; SameSite=None; Max-Age=${12 * 60 * 60}; Path=/`);
