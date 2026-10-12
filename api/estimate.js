@@ -140,7 +140,7 @@ module.exports = async (req, res) => {
     const range = encodeURIComponent(`'${tab}'!A${targetRow}:D${targetRow}`);
     const row = [new Date().toISOString().split('T')[0], String(month), String(item), usedQty];
     await sheetsRequest(
-      `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}`,
+      `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}?valueInputOption=USER_ENTERED`,
       accessToken,
       { method: 'PUT', body: JSON.stringify({ values: [row] }) }
     );
