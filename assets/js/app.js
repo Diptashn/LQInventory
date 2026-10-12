@@ -210,6 +210,18 @@ if (location.pathname.endsWith('sheets.html')) {
   });
 }
 
+// ── global logout (any page with #logoutBtn) ────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const logoutBtn = document.getElementById('logoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      await fetch(`${API_BASE}/logout`, { method: 'POST', credentials: 'include' });
+      setToken(null);
+      location.href = 'login.html';
+    });
+  }
+});
+
 // ── utils ────────────────────────────────────────────────────────────────
 function escapeHtml(text) {
   const map = { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#039;' };
