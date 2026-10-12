@@ -243,7 +243,7 @@ if (location.pathname.endsWith('estimate.html')) {
         if (!resp.ok) throw new Error(data.error || 'Submit failed');
 
         const inv = data.inventory || {};
-        resultContentEl.textContent = `✓ ${data.message}\nItem: ${data.row[2]}\nBulan: ${data.row[1]}\nProduk: ${data.row[0]}\nQty: ${data.row[3]} g\nStok setelah: ${inv.after ?? '—'} g`;
+        resultContentEl.textContent = `✓ ${data.message}\nItem: ${data.row[0]}\nBulan: ${month}\nProduk: ${data.row[1]}\nQty: ${data.row[4]} g\nStok setelah: ${inv.after ?? '—'} g`;
         resultEl.classList.remove('hidden');
         form.reset();
       } catch (err) {
