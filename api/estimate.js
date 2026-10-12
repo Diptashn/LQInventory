@@ -57,32 +57,45 @@ module.exports = async (req, res) => {
   const auth = requireAuth(req, res);
   if (!auth) return;
 
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ success:false, error:'Method not allowed' });
 
-  // Simple body parsing (Node 18+ supports json body via req.body if using Vercel's serverless? Use raw data.)
-  let payload = '';
-  req.on('data', chunk => { payload += chunk; });
-  req.on('end', async () => {
-    try {
-      const { month, product_tab, item, qty } = JSON.parse(payload);
-      if (!month || !product_tab || !item || qty == null) throw new Error('Missing fields');
-
-      const accessToken = await getAccessToken();
-      const tab = await resolveTabName(accessToken, product_tab);
-      const range = encodeURIComponent(`'${tab}'`);
-
-      const row = [new Date().toISOString().split('T')[0], month, item, Number(qty)];
-      // Append row to the sheet tab
-      await sheetsRequest(
-        `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}:append?valueInputOption=USER_ENTERED`,
-        accessToken,
-        { method: 'POST', body: JSON.stringify({ values: [row] }) }
-      );
-
-      return res.status(200).json({ success:true, message:'Estimate recorded', row });
-    } catch (e) {
-      console.error('[estimate]', e);
-      return res.status(400).json({ success:false, error:e.message });
+  try {
+    // Vercel pre-parses JSON bodies into req.body; fallback to raw stream locally
+    let body = req.body;
+    if (!body) {
+      const raw = await new Promise((resolve, reject) => {
+        let payload = '';
+        req.on('data', chunk => { payload += chunk; });
+        req.on('end', () => resolve(payload));
+        req.on('error', reject);
+      });
+      body = raw ? JSON.parse(raw) : {};
+    } else if (typeof body === 'string') {
+      body = JSON.parse(body);
     }
-  });
+
+    const { month, product_tab, item, qty } = body || {};
+    if (!month || !product_tab || !item || qty == null) throw new Error('Missing fields: month, product_tab, item, qty required');
+
+    const accessToken = await getAccessToken();
+    const tab = await resolveTabName(accessToken, product_tab);
+    const range = encodeURIComponent(`'${tab}'`);
+
+    const row = [new Date().toISOString().split('T')[0], String(month), String(item), Number(qty)];
+    // Append row to the sheet tab
+    await sheetsRequest(
+      `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}:append?valueInputOption=USER_ENTERED`,
+      accessToken,
+      { method: 'POST', body: JSON.stringify({ values: [row] }) }
+    );
+
+    return res.status(200).json({ success:true, message:'Estimate recorded', row, tab });
+  } catch (e) {
+    console.error('[estimate]', e);
+    return res.status(400).json({ success:false, error:e.message });
+  }
 };
