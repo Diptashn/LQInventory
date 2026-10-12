@@ -13,7 +13,7 @@
 //   tab=NAME         – custom tab name (default 'Inventory')
 
 const { Client } = require('pg');
-const google = require('googleapis');
+const { google } = require('googleapis');
 const { requireAuth } = require('./auth');
 
 // ── config ───────────────────────────────────────────────────────────────
