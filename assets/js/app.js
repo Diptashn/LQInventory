@@ -235,6 +235,7 @@ if (window.location.pathname.endsWith('sheets.html')) {
       }
     });
 
+
     console.log('Sheets page loaded');
   });
 }
