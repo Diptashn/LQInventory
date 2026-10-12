@@ -28,8 +28,7 @@ module.exports = async (req, res) => {
   try {
     await connect();
 
-    // DELETE /api/items -> wipe the table (used by PUSH so the sheet is a
-    // true mirror of localStorage instead of accumulating stale rows)
+    // DELETE /api/items -> wipe the table (legacy, no longer used by UI)
     if (req.method === 'DELETE') {
       const { rowCount } = await client.query('DELETE FROM inventory_items');
       return res.status(200).json({ success: true, deleted: rowCount });
@@ -65,7 +64,7 @@ module.exports = async (req, res) => {
         `INSERT INTO inventory_items (entry_date, product_name, quantity, unit_cost, notes)
               VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (lower(product_name)) DO UPDATE
-            SET quantity   = EXCLUDED.quantity,
+            SET quantity   = inventory_items.quantity + EXCLUDED.quantity,
                 unit_cost = EXCLUDED.unit_cost,
                 notes     = EXCLUDED.notes,
                 entry_date = EXCLUDED.entry_date
