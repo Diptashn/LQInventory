@@ -57,7 +57,11 @@ form.addEventListener('submit', async (e) => {
     if (!res.ok) throw new Error(data.error || 'Login failed');
     // token returned in body (and cookie); store for Bearer use
     localStorage.setItem('auth_token', data.token);
-    window.location.href = 'index.html';
+    // redirect to requested page if present, else home
+    const urlParams = new URLSearchParams(window.location.search);
+    const next = urlParams.get('next');
+    const destination = next ? decodeURIComponent(next) : 'index.html';
+    window.location.href = destination;
   } catch (e) {
     errEl.textContent = e.message;
     errEl.classList.remove('hidden');

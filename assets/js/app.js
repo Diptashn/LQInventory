@@ -18,7 +18,11 @@ function authFetch(url, opts = {}) {
 function requireAuthOrRedirect() {
   if (location.pathname.endsWith('login.html')) return;
   const tok = getToken();
-  if (!tok) { location.href = 'login.html'; return false; }
+  if (!tok) {
+    const next = encodeURIComponent(location.pathname);
+    location.href = `login.html?next=${next}`;
+    return false;
+  }
   return true;
 }
 
