@@ -183,11 +183,21 @@ if (location.pathname.endsWith('estimate.html')) {
     const resultEl = document.getElementById('estimate-result');
     const resultContentEl = document.getElementById('result-content');
 
-    // Load inventory items into item dropdown
-    function loadItems() {
-      const items = InventoryService.getAll();
-      itemSelectEl.innerHTML = '<option value="">Pilih item (stok dari Inventory)</option>' +
-        items.map(i => `<option value="${escapeHtml(i.name)}">${escapeHtml(i.name)} (${i.qty} g, Rp ${formatCurrency(i.unit_cost)}/kg)</option>`).join('');
+    // Load inventory items from Neon into the item dropdown (async — getAll hits the API)
+    async function loadItems() {
+      try {
+        const items = await InventoryService.getAll();
+        itemSelectEl.innerHTML = '<option value="">Pilih item (stok dari Inventory)</option>' +
+          items.map(i => {
+            const name = i.product_name || i.name || '';
+            const qty  = Number(i.quantity ?? i.qty) || 0;
+            const cost = Number(i.unit_cost) || 0;
+            return `<option value="${escapeHtml(name)}">${escapeHtml(name)} (${qty.toFixed ? qty.toFixed(2) : qty} g, Rp ${formatCurrency(cost)}/kg)</option>`;
+          }).join('');
+      } catch (err) {
+        itemSelectEl.innerHTML = '<option value="">Gagal memuat item</option>';
+        console.error('[estimate] loadItems failed:', err);
+      }
     }
 
     // Load items on page load
