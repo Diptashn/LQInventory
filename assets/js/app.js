@@ -22,24 +22,37 @@ function requireAuthOrRedirect() {
   return true;
 }
 
-// ── Inventory Service using localStorage ─────────────────────────────────
+// ── Inventory Service using NeonDB API ───────────────────────────────────
 const InventoryService = {
-  STORAGE_KEY: 'lilquin-inventory',
-
-  getAll()   { const d = localStorage.getItem(this.STORAGE_KEY); return d ? JSON.parse(d) : []; },
-  saveAll(i) { localStorage.setItem(this.STORAGE_KEY, JSON.stringify(i)); },
-
-  add(item) {
-    const items = this.getAll();
-    const newItem = { id: Date.now() + Math.floor(Math.random() * 10000), ...item };
-    items.push(newItem);
-    this.saveAll(items);
-    return newItem;
+  async getAll() {
+    const res = await authFetch(`${API_BASE}/items`);
+    const data = await res.json();
+    return data.data || [];
   },
-  remove(id) { this.saveAll(this.getAll().filter(i => i.id !== id)); },
-  update(id, updates) {
-    this.saveAll(this.getAll().map(item => item.id === id ? { ...item, ...updates } : item));
+
+  async add(item) {
+    const res = await authFetch(`${API_BASE}/items`, {
+      method: 'POST',
+      body: JSON.stringify(item)
+    });
+    return res.json();
   },
+
+  async remove(id) {
+    await authFetch(`${API_BASE}/items?id=${id}`, { method: 'DELETE' });
+  },
+
+  async update(id, updates) {
+    // GET current item first, then PUT with merged data
+    const res = await authFetch(`${API_BASE}/items?id=${id}`);
+    const current = await res.json();
+    const merged = { ...current, ...updates };
+    const putRes = await authFetch(`${API_BASE}/items?id=${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(merged)
+    });
+    return putRes.json();
+  }
 };
 
 // ── formatting / cost helpers ───────────────────────────────────────────
@@ -237,37 +250,16 @@ if (location.pathname.endsWith('sheets.html')) {
       } catch (err) { syncStatusEl.textContent = `Error: ${err.message}`; }
     });
 
-    // --- PUSH: localStorage -> Neon -> Google Sheets ---
-    document.getElementById('sync-db2s').addEventListener('click', async () => {
-      syncStatusEl.textContent = 'Pushing…';
-
-      // Phase 1: push each local item to Neon (one POST per row)
-      const items = InventoryService.getAll();
-      let pushed = 0;
-      for (const item of items) {
-        try {
-          const resp = await authFetch(`${API_BASE}/items`, {
-            method: 'POST',
-            body: JSON.stringify({
-              entry_date: item.updated_at || new Date().toISOString().split('T')[0],
-              product_name: item.name,
-              quantity: Number(item.qty) || 0,
-              unit_cost: Number(item.unit_cost) || 0,
-              notes: '',
-            }),
-          });
-          if (resp.ok) pushed++;
-        } catch { /* keep going, count successes */ }
-      }
-
-      // Phase 2: export Neon data to Google Sheets
+    // --- Export Neon → Google Sheets (one‑click) ---
+    document.getElementById('export-to-sheets').addEventListener('click', async () => {
+      syncStatusEl.textContent = 'Exporting Neon to Sheet…';
       try {
-        const exportResp = await authFetch(`${API_BASE}/export-to-sheet`, { method: 'GET' });
-        const exportJson = await exportResp.json();
-        if (!exportJson.success) throw new Error(exportJson.error || 'export failed');
-        syncStatusEl.textContent = `Pushed ${pushed}/${items.length} to Neon, exported ${exportJson.rows} rows to Google Sheet`;
+        const resp = await authFetch(`${API_BASE}/export-to-sheet`, { method: 'GET' });
+        const json = await resp.json();
+        if (!json.success) throw new Error(json.error || 'Export failed');
+        syncStatusEl.textContent = `Exported ${json.rows} rows to Google Sheet`;
       } catch (err) {
-        syncStatusEl.textContent = `Pushed ${pushed}/${items.length} to Neon. Sheet export error: ${err.message}`;
+        syncStatusEl.textContent = `Export error: ${err.message}`;
       }
     });
 
