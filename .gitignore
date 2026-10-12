@@ -16,3 +16,9 @@ data/inventory.json
 # OS
 .DS_Store
 Thumbs.db
+# Python cache
+__pycache__/
+*.pyc
+
+# Export venv (build artifact, not committable)
+.venv-export/
