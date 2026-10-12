@@ -86,7 +86,8 @@ if (location.pathname.endsWith('inventory.html') || location.pathname === '/' ||
           const id = e.target.dataset.id;
           const item = InventoryService.getAll().find(i => String(i.id) === String(id));
           if (!item) return;
-          const name = prompt('Nama bahan:', item.name) || item.name;
+          const rawName = prompt('Nama bahan:', item.name) || item.name;
+          const name = sentenceCase(rawName);
           const qty  = parseFloat(prompt('Qty (grams):', item.qty)) || item.qty;
           const unit_cost = parseFloat(prompt('Harga /kg (Rp):', item.unit_cost)) || item.unit_cost;
           if (name !== null && !isNaN(qty) && !isNaN(unit_cost)) {
@@ -100,10 +101,17 @@ if (location.pathname.endsWith('inventory.html') || location.pathname === '/' ||
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const name = form.name.value.trim();
+      const normName = sentenceCase(name);
       const qty = parseFloat(form.qty.value);
       const unit_cost = parseFloat(form.unit_cost.value);
       if (name && !isNaN(qty) && !isNaN(unit_cost) && qty > 0 && unit_cost > 0) {
-        InventoryService.add({ name, qty, unit_cost, updated_at: new Date().toISOString() });
+        // Case-insensitive duplicate check: update the existing row instead of adding a new one
+        const existing = InventoryService.getAll().find(i => i.name.toLowerCase() === normName.toLowerCase());
+        if (existing) {
+          InventoryService.update(existing.id, { name: normName, qty, unit_cost, updated_at: new Date().toISOString() });
+        } else {
+          InventoryService.add({ name: normName, qty, unit_cost, updated_at: new Date().toISOString() });
+        }
         form.reset();
         renderItems(searchInput.value);
       } else { alert('Mohon isi semua field dengan nilai yang valid'); }
@@ -148,7 +156,7 @@ if (location.pathname.endsWith('sheets.html')) {
         if (!json.data) { syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`; return; }
         const mapped = json.data.map(row => ({
           id: row.id,
-          name: row.product_name,
+          name: sentenceCase(row.product_name),
           qty: Number(row.quantity),
           unit_cost: Number(row.unit_cost),
           updated_at: row.created_at || row.entry_date,
@@ -202,8 +210,16 @@ if (location.pathname.endsWith('sheets.html')) {
   });
 }
 
-// ── utility ──────────────────────────────────────────────────────────────
+// ── utils ────────────────────────────────────────────────────────────────
 function escapeHtml(text) {
   const map = { '&': '&', '<': '<', '>': '>', '"': '"', "'": '&#039;' };
   return text.replace(/[&<>"']/g, m => map[m]);
+}
+
+// Sentence-case: "VANILLA SUGAR" -> "Vanilla sugar"
+// Also used to normalize duplicates (case-insensitive).
+function sentenceCase(str) {
+  const s = String(str || '').trim();
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
