@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/:path*" }
+  ],
+  "env": {
+    "DATABASE_URL": "postgresql://neondb_owner:npg_5bjenFDg8BTQ@ep-flat-mountain-b3y8z56k-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+  }
+}
