@@ -119,15 +119,30 @@ module.exports = async (req, res) => {
       [newQty, id]
     );
 
-    // ── 2. Write the row to Google Sheets ──
+    // 2. Write the row to Google Sheets – insert into proper month block
     const accessToken = await getAccessToken();
     const tab = await resolveTabName(accessToken, product_tab);
-    const range = encodeURIComponent(`'${tab}'`);
+    // Load full tab values to locate month header
+    const tabValues = await sheetsRequest(
+      `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${encodeURIComponent(`'${tab}'`)}`,
+      accessToken
+    );
+    const rowsData = tabValues.values || [];
+    const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+    const monthIdx = rowsData.findIndex(r => r[0] && monthNames.includes(r[0].trim()));
+    if (monthIdx === -1) throw new Error(`Month "${month}" not found in tab ${tab}`);
+    // Find first empty row after month header (starting at monthIdx+1)
+    let insertIdx = monthIdx + 1;
+    while (insertIdx < rowsData.length && rowsData[insertIdx] && rowsData[insertIdx][0] !== '' && rowsData[insertIdx][0] !== undefined) {
+      insertIdx++;
+    }
+    const targetRow = insertIdx + 1; // Sheets rows are 1-indexed
+    const range = encodeURIComponent(`'${tab}'!A${targetRow}:D${targetRow}`);
     const row = [new Date().toISOString().split('T')[0], String(month), String(item), usedQty];
     await sheetsRequest(
-      `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}:append?valueInputOption=USER_ENTERED`,
+      `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}`,
       accessToken,
-      { method: 'POST', body: JSON.stringify({ values: [row] }) }
+      { method: 'PUT', body: JSON.stringify({ values: [row] }) }
     );
 
     // ── 3. Commit — both writes succeeded ──
