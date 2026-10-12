@@ -4,7 +4,7 @@ process.env.GOOGLE_CLIENT_SECRET_JSON = fs.readFileSync('/opt/data/profiles/deve
 process.env.GOOGLE_TOKEN_JSON = fs.readFileSync('/opt/data/profiles/developer/google_token.json', 'utf8');
 process.env.AUTH_SECRET = 'lq-inventory-dev-secret';
 
-const { sign } = require('./api/auth.js');
+const { sign } = require('../api/auth.js');
 const token = sign({ id: 'test', username: 'dipta' });
 
 async function callApi(method, path, body = null) {
