@@ -95,15 +95,12 @@ module.exports = async (req, res) => {
 
     // ── 1. Deduct stock from Neon (atomic, guarded against concurrent requests) ──
     await client.query('BEGIN');
-    const { rows } = await client.query(
-      'SELECT id, quantity FROM inventory_items WHERE lower(product_name) = $1 FOR UPDATE',
-      [String(item).trim().toLowerCase()]
-    );
+    const { id, product_name, quantity, unit_cost } = rows[0];
     if (rows.length === 0) throw new Error(`Item "${item}" not found in inventory`);
     if (rows.length > 1) throw new Error(`Item "${item}" is ambiguous — duplicate rows in inventory`);
 
-    const { id, quantity } = rows[0];
     const currentQty = Number(quantity);
+
     if (currentQty < usedQty) {
       await client.query('ROLLBACK');
       return res.status(400).json({
@@ -137,8 +134,9 @@ module.exports = async (req, res) => {
       insertIdx++;
     }
     const targetRow = insertIdx + 1; // Sheets rows are 1-indexed
-    const range = encodeURIComponent(`'${tab}'!A${targetRow}:D${targetRow}`);
-    const row = [new Date().toISOString().split('T')[0], String(month), String(item), usedQty];
+    const range = encodeURIComponent(`'${tab}'!A${targetRow}:E${targetRow}`);
+    // Build row: A=ID, B=NAMA BAHAN, C=HARGA/KG, D= (empty for HARGA/GRAM), E=PEMAKAIAN
+    const row = [String(id), String(product_name), String(unit_cost), "", usedQty];
     await sheetsRequest(
       `${process.env.SHEETS_API || 'https://sheets.googleapis.com/v4/spreadsheets'}/${process.env.GOOGLE_SHEET_ID || '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA'}/values/${range}?valueInputOption=USER_ENTERED`,
       accessToken,
