@@ -77,8 +77,9 @@ if (location.pathname.endsWith('inventory.html') || location.pathname === '/' ||
 
       document.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-          const id = e.target.dataset.id;   // UUID or numeric string – never parseInt
-          if (confirm('Hapus bahan ini?')) { InventoryService.remove(id); renderItems(searchInput.value); }
+          const idStr = e.target.dataset.id;
+          // id in localStorage is numeric; dataset.id is string → loose compare
+          if (confirm('Hapus bahan ini?')) { InventoryService.remove(Number(idStr)); renderItems(searchInput.value); }
         });
       });
       document.querySelectorAll('.edit-btn').forEach(btn => {
