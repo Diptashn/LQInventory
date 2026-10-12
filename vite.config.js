@@ -5,7 +5,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     rollupOptions: {
-      input: { index: 'index.html', inventory: 'inventory.html', estimate: 'estimate.html', sheets: 'sheets.html' },
+      input: { index: 'index.html', inventory: 'inventory.html', estimate: 'estimate.html', sheets: 'sheets.html', admin: 'admin.html' },
     },
     minify: 'esbuild',
   },
