@@ -35,10 +35,19 @@ function loadJsonFromEnvOrFile(envVar, fallbackPath) {
 }
 
 async function getGoogleAuth() {
-  const secret = loadJsonFromEnvOrFile(
-    'GOOGLE_CLIENT_SECRET_JSON',
-    '/opt/data/profiles/developer/google_client_secret.json'
-  ).installed;
+  const raw = process.env.GOOGLE_CLIENT_SECRET_JSON;
+  console.error('[debug] GOOGLE_CLIENT_SECRET_JSON raw length:', raw?.length, 'first 200:', raw?.substring(0, 200));
+  let secret;
+  try {
+    secret = JSON.parse(raw);
+    console.error('[debug] parsed secret keys:', Object.keys(secret));
+  } catch (e) {
+    console.error('[debug] failed to parse GOOGLE_CLIENT_SECRET_JSON:', e.message);
+    secret = null;
+  }
+  if (!secret || !secret.installed) {
+    throw new Error('Invalid GOOGLE_CLIENT_SECRET_JSON: missing .installed field');
+  }
 
   const tokenObj = loadJsonFromEnvOrFile(
     'GOOGLE_TOKEN_JSON',
