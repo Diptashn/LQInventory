@@ -95,9 +95,13 @@ module.exports = async (req, res) => {
 
     // ── 1. Deduct stock from Neon (atomic, guarded against concurrent requests) ──
     await client.query('BEGIN');
-    const { id, product_name, quantity, unit_cost } = rows[0];
+    const { rows } = await client.query(
+      'SELECT id, product_name, quantity, unit_cost FROM inventory_items WHERE lower(product_name) = $1 FOR UPDATE',
+      [String(item).trim().toLowerCase()]
+    );
     if (rows.length === 0) throw new Error(`Item "${item}" not found in inventory`);
     if (rows.length > 1) throw new Error(`Item "${item}" is ambiguous — duplicate rows in inventory`);
+    const { id, product_name, quantity, unit_cost } = rows[0];
 
     const currentQty = Number(quantity);
 
