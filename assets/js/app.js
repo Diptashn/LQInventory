@@ -246,6 +246,7 @@ if (location.pathname.endsWith('estimate.html')) {
         resultContentEl.textContent = `✓ ${data.message}\nItem: ${data.row[0]}\nBulan: ${month}\nProduk: ${data.row[1]}\nQty: ${data.row[4]} g\nStok setelah: ${inv.after ?? '—'} g`;
         resultEl.classList.remove('hidden');
         form.reset();
+        await loadItems(); // refresh item dropdown qty
       } catch (err) {
         resultContentEl.textContent = `✗ ${err.message}`;
         resultEl.classList.remove('hidden');
