@@ -204,32 +204,19 @@ if (window.location.pathname.endsWith('sheets.html')) {
       }
     });
 
-    // --- PUSH: localStorage -> Neon (one POST per row) ---
+    // --- PUSH: localStorage → Neon (one POST per row) ---
     document.getElementById('sync-db2s').addEventListener('click', async () => {
-      syncStatusEl.textContent = 'Pushing…';
-      const items = InventoryService.getAll();
-      if (items.length === 0) {
-        syncStatusEl.textContent = 'Nothing to push (localStorage empty)';
-        return;
-      }
+      syncStatusEl.textContent = 'Pushing to sheet…';
       try {
-        let ok = 0, failed = 0;
-        for (const item of items) {
-          const body = {
-            entry_date: (item.updated_at || new Date().toISOString()).slice(0, 10),
-            product_name: item.name,
-            quantity: Number(item.qty),
-            unit_cost: Number(item.unit_cost),
-            notes: '',
-          };
-          const resp = await fetch(`${API_BASE}/items`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          });
-          if (resp.ok) ok++; else failed++;
+        const resp = await fetch(`${API_BASE}/export-to-sheet`, {
+          method: 'GET', // simple GET triggers server‑side export
+        });
+        const json = await resp.json();
+        if (!json.success) {
+          syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`;
+          return;
         }
-        syncStatusEl.textContent = `Pushed ${ok} rows` + (failed ? `, ${failed} failed` : '');
+        syncStatusEl.textContent = `Exported ${json.rows} rows to Google Sheet`;
       } catch (err) {
         syncStatusEl.textContent = `Error: ${err.message}`;
       }
