@@ -1,4 +1,4 @@
-# LQInventory — LilQuin Kitchen
+Lilquin Inventory — LilQuin Kitchen
 
 Static front-end for LilQuin Kitchen inventory & estimation, with an optional
 backend API for Google Sheets sync.
