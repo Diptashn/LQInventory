@@ -126,7 +126,62 @@ if (location.pathname.endsWith('inventory.html') || location.pathname === '/' ||
 if (location.pathname.endsWith('estimate.html')) {
   document.addEventListener('DOMContentLoaded', () => {
     if (!requireAuthOrRedirect()) return;
-    console.log('Estimate page loaded');
+
+    const form = document.getElementById('estimate-form');
+    const monthEl = document.getElementById('month');
+    const productTabEl = document.getElementById('product_tab');
+    const itemSelectEl = document.getElementById('item_select');
+    const qtyEl = document.getElementById('qty');
+    const resultEl = document.getElementById('estimate-result');
+    const resultContentEl = document.getElementById('result-content');
+
+    // Load inventory items into item dropdown
+    function loadItems() {
+      const items = InventoryService.getAll();
+      itemSelectEl.innerHTML = '<option value="">Pilih item (stok dari Inventory)</option>' +
+        items.map(i => `<option value="${escapeHtml(i.name)}">${escapeHtml(i.name)} (${i.qty} g, Rp ${formatCurrency(i.unit_cost)}/kg)</option>`).join('');
+    }
+
+    // Load items on page load
+    loadItems();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const month = monthEl.value;
+      const product_tab = productTabEl.value;
+      const item = itemSelectEl.value;
+      const qty = parseFloat(qtyEl.value);
+
+      if (!month || !product_tab || !item || isNaN(qty) || qty <= 0) {
+        alert('Mohon isi semua field dengan benar');
+        return;
+      }
+
+      const submitBtn = form.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Mengirim…';
+
+      try {
+        const resp = await authFetch(`${API_BASE}/estimate`, {
+          method: 'POST',
+          body: JSON.stringify({ month, product_tab, item, qty }),
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) throw new Error(data.error || 'Submit failed');
+
+        resultContentEl.textContent = `✓ ${data.message}\nItem: ${data.row[2]}\nBulan: ${data.row[1]}\nProduk: ${data.row[0]}\nQty: ${data.row[3]} g`;
+        resultEl.classList.remove('hidden');
+        form.reset();
+      } catch (err) {
+        resultContentEl.textContent = `✗ Error: ${err.message}`;
+        resultEl.classList.remove('hidden');
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Submit Estimate';
+      }
+    });
   });
 }
 
