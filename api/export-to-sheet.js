@@ -105,9 +105,42 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const clear = req.query.clear !== 'false';
+  const read = req.query.read === 'true';
+  const clear = !req.query.clear; // when read=true, default clear=false
   const tabName = req.query.tab || DEFAULT_TAB;
 
+  // When read-only, skip DB query and just fetch sheet values
+  if (read) {
+    const accessToken = await getAccessToken();
+    const tab = await resolveTabName(accessToken, tabName);
+
+    // Read all values from the tab, starting below the header row
+    const meta = await sheetsRequest(
+      `${SHEETS_API}/${SHEET_ID}?range=${encodeURIComponent("'"+tab+"'")}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIALIZE`,
+      accessToken
+    );
+    const values = meta.values || [];
+
+    // First row is header; treat remaining as data rows
+    const header = values[0] || [];
+    const rows = values.slice(1).map((row, i) => ({
+      id: i + 1, // fallback ID since we don't have Neon IDs from sheet
+      name: row[2] || '',        // Product Name column (index 2)
+      qty: row[3] ? Number(row[3]) : 0, // Quantity column (index 3)
+      unit_cost: row[4] ? Number(row[4]) : 0, // Unit Cost column (index 4)
+      notes: row[5] || '',
+      updated_at: new Date().toISOString(),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      tab,
+      rows,
+      sheet_url: `https://docs.google.com/spreadsheets/d/${SHEET_ID}`,
+    });
+  }
+
+  // ── full pipeline: Neon → Google Sheet (original behaviour) ──────────────
   const client = new Client({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
@@ -126,7 +159,7 @@ module.exports = async (req, res) => {
     // 2. auth to google
     const accessToken = await getAccessToken();
     const tab = await resolveTabName(accessToken, tabName);
-    const range = encodeURIComponent(`'${tab}'`); // quoted tab name for A1 notation
+    const range = encodeURIComponent(`'${tab}'`);
 
     // 3. clear existing data below the header row
     if (clear) {
