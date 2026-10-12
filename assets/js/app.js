@@ -26,6 +26,7 @@ function requireAuthOrRedirect() {
 const InventoryService = {
   async getAll() {
     const res = await authFetch(`${API_BASE}/items`);
+    if (!res.ok) throw new Error(`GET /items ${res.status}`);
     const data = await res.json();
     return data.data || [];
   },
@@ -35,22 +36,30 @@ const InventoryService = {
       method: 'POST',
       body: JSON.stringify(item)
     });
+    if (!res.ok) {
+      let msg = `POST /items ${res.status}`;
+      try { const d = await res.json(); if (d.error) msg += `: ${d.error}`; } catch { /* ignore */ }
+      throw new Error(msg);
+    }
     return res.json();
   },
 
   async remove(id) {
-    await authFetch(`${API_BASE}/items?id=${id}`, { method: 'DELETE' });
+    const res = await authFetch(`${API_BASE}/items?id=${id}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`DELETE /items ${res.status}`);
   },
 
   async update(id, updates) {
     // GET current item first, then PUT with merged data
     const res = await authFetch(`${API_BASE}/items?id=${id}`);
+    if (!res.ok) throw new Error(`GET /items ${res.status}`);
     const current = await res.json();
     const merged = { ...current, ...updates };
     const putRes = await authFetch(`${API_BASE}/items?id=${id}`, {
       method: 'PUT',
       body: JSON.stringify(merged)
     });
+    if (!putRes.ok) throw new Error(`PUT /items ${putRes.status}`);
     return putRes.json();
   }
 };
