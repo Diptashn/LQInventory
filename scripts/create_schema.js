@@ -17,8 +17,8 @@ create table if not exists inventory_items (
   created_at   timestamptz not null default now()
 );
 
--- index on entry_date + product_name for month queries
-create index if not exists idx_inventory_entry_product on inventory_items (entry_date, product_name);
+-- lowercase unique index (supports ON CONFLICT lower(product_name))
+create unique index if not exists idx_inventory_lower_name on inventory_items (lower(product_name));
 
 -- row-level security: allow anon full access (personal use)
 alter table inventory_items enable row level security;
