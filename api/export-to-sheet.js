@@ -65,34 +65,43 @@ async function getAccessToken() {
   return token;
 }
 
-// Thin fetch wrapper that surfaces Google's error text instead of "500".
-async function sheetsRequest(url, accessToken, options = {}) {
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Sheets API ${res.status}: ${text.slice(0, 300)}`);
-  }
-  return text ? JSON.parse(text) : {};
+// Sentence-case helper: "VANILLA SUGAR" -> "Vanilla sugar"
+function sentenceCase(str) {
+  const s = String(str || '').trim();
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
+
+  // Thin fetch wrapper that surfaces Google's error text instead of "500".
+  async function sheetsRequest(url, accessToken, options = {}) {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Sheets API ${res.status}: ${text.slice(0, 300)}`);
+    }
+    return text ? JSON.parse(text) : {};
+  }
 
 // Resolve the requested tab to its real (case-preserved) title in the sheet.
 async function resolveTabName(accessToken, tabName) {
-  const meta = await sheetsRequest(
-    `${SHEETS_API}/${SHEET_ID}?fields=sheets.properties.title`,
-    accessToken
-  );
-  const titles = (meta.sheets || []).map((s) => s.properties.title);
-  const real = titles.find((t) => t.toLowerCase() === tabName.toLowerCase());
-  if (!real) throw new Error(`Tab "${tabName}" not found. Available: ${titles.join(', ')}`);
-  return real;
+const meta = await sheetsRequest(
+  `${SHEETS_API}/${SHEET_ID}?fields=sheets.properties.title`,
+  accessToken
+);
+const titles = (meta.sheets || []).map((s) => s.properties.title);
+const real = titles.find((t) => t.toLowerCase() === tabName.toLowerCase());
+if (!real) throw new Error(`Tab "${tabName}" not found. Available: ${titles.join(', ')}`);
+return real;
 }
+
 
 // ── main handler ─────────────────────────────────────────────────────────
 module.exports = async (req, res) => {
@@ -102,42 +111,51 @@ module.exports = async (req, res) => {
 
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const read = req.query.read === 'true';
   const clear = !req.query.clear; // when read=true, default clear=false
   const tabName = req.query.tab || DEFAULT_TAB;
 
-  // When read-only, skip DB query and just fetch sheet values
+  // ── read mode: Google Sheet -> JSON (no DB) ─────────────────────────────
   if (read) {
-    const accessToken = await getAccessToken();
-    const tab = await resolveTabName(accessToken, tabName);
+    try {
+      const accessToken = await getAccessToken();
+      const tab = await resolveTabName(accessToken, tabName);
 
-    // Read all values from the tab, starting below the header row
-    const meta = await sheetsRequest(
-      `${SHEETS_API}/${SHEET_ID}?range=${encodeURIComponent("'"+tab+"'")}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIALIZE`,
-      accessToken
-    );
-    const values = meta.values || [];
+      // NOTE: reading cell values lives under /values/{range}, NOT the
+      // spreadsheets.get endpoint (which only returns sheet metadata).
+      const quotedTab = encodeURIComponent(`'${tab}'`);
+      const data = await sheetsRequest(
+        `${SHEETS_API}/${SHEET_ID}/values/${quotedTab}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIALIZE`,
+        accessToken
+      );
+      const values = data.values || [];
 
-    // First row is header; treat remaining as data rows
-    const header = values[0] || [];
-    const rows = values.slice(1).map((row, i) => ({
-      id: i + 1, // fallback ID since we don't have Neon IDs from sheet
-      name: row[2] || '',        // Product Name column (index 2)
-      qty: row[3] ? Number(row[3]) : 0, // Quantity column (index 3)
-      unit_cost: row[4] ? Number(row[4]) : 0, // Unit Cost column (index 4)
-      notes: row[5] || '',
-      updated_at: new Date().toISOString(),
-    }));
+      // Row 0 is the header we wrote on push; the rest are inventory rows.
+      const rows = values.slice(1)
+        .filter((r) => r && r[2])                 // skip blank / unnamed rows
+        .map((r, i) => ({
+          id: i + 1,
+          name: sentenceCase(String(r[2])),
+          qty: Number(r[3]) || 0,
+          unit_cost: Number(r[4]) || 0,
+          notes: r[5] || '',
+          updated_at: new Date().toISOString(),
+        }));
 
-    return res.status(200).json({
-      success: true,
-      tab,
-      rows,
-      sheet_url: `https://docs.google.com/spreadsheets/d/${SHEET_ID}`,
-    });
+      return res.status(200).json({
+        success: true,
+        tab,
+        count: rows.length,
+        rows,
+        sheet_url: `https://docs.google.com/spreadsheets/d/${SHEET_ID}`,
+      });
+    } catch (err) {
+      console.error('[export-to-sheet:read]', err);
+      return res.status(500).json({ success: false, error: err.message || 'sheet read failed' });
+    }
   }
 
   // ── full pipeline: Neon → Google Sheet (original behaviour) ──────────────
