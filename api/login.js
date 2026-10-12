@@ -1,5 +1,5 @@
-// api/login.js
-// POST /api/login - authenticate user and issue JWT token
+// api/login.js – POST /api/login – login & issue JWT token
+// In plain Vercel serverless (no Express) we set the cookie via response header.
 const bcrypt = require('bcryptjs');
 const { Client } = require('pg');
 const { sign } = require('./auth');
@@ -43,12 +43,9 @@ module.exports = async (req, res) => {
     }
 
     const token = sign({ sub: user.id });
-    res.cookie('session', token, {
-      httpOnly: true,
-      secure: true,            // HTTPS only (Vercel)
-      sameSite: 'none',
-      maxAge: 12 * 60 * 60 * 1000, // 12 h
-    });
+
+    // Set the session cookie header so the browser will send it automatically
+    res.setHeader('Set-Cookie', `session=${token}; HttpOnly; Secure; SameSite=None; Max-Age=${12 * 60 * 60}; Path=/`);
 
     return res.status(200).json({
       success: true,
