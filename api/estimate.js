@@ -130,7 +130,8 @@ module.exports = async (req, res) => {
     );
     const rowsData = tabValues.values || [];
     const monthNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
-    const monthIdx = rowsData.findIndex(r => r[0] && monthNames.includes(r[0].trim()));
+    const selectedMonthName = monthNames[parseInt(month,10)-1];
+    const monthIdx = rowsData.findIndex(r => r[0] && r[0].trim() === selectedMonthName);
     if (monthIdx === -1) throw new Error(`Month "${month}" not found in tab ${tab}`);
     // Find first empty row after month header (starting at monthIdx+1)
     let insertIdx = monthIdx + 1;
