@@ -147,22 +147,37 @@ if (location.pathname.endsWith('sheets.html')) {
       })
       .catch(() => { tokenStatusEl.textContent = 'Error'; syncStatusEl.textContent = 'Connection failed'; });
 
-    // --- PULL: Neon -> localStorage ---
+    // --- PULL: Google Sheet → localStorage → Neon ---
     document.getElementById('sync-s2db').addEventListener('click', async () => {
-      syncStatusEl.textContent = 'Pulling…';
+      syncStatusEl.textContent = 'Pulling from Google Sheet…';
       try {
-        const resp = await authFetch(`${API_BASE}/items`);
-        const json = await resp.json();
-        if (!json.data) { syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`; return; }
-        const mapped = json.data.map(row => ({
-          id: row.id,
-          name: sentenceCase(row.product_name),
-          qty: Number(row.quantity),
-          unit_cost: Number(row.unit_cost),
-          updated_at: row.created_at || row.entry_date,
-        }));
-        InventoryService.saveAll(mapped);
-        syncStatusEl.textContent = `Pulled ${mapped.length} rows (${json.count} from server)`;
+        // Step 1: fetch data from Google Sheet (server-side, needs Google creds)
+        const sheetResp = await authFetch(`${API_BASE}/export-to-sheet?read=true`, { method: 'GET' });
+        const sheetJson = await sheetResp.json();
+        if (!sheetJson.success) { syncStatusEl.textContent = `Sheet read error: ${sheetJson.error || 'unknown'}`; return; }
+
+        const items = sheetJson.rows;
+        InventoryService.saveAll(items);
+
+        // Step 2: push each sheet row to Neon so both sides match
+        let pushed = 0;
+        for (const item of items) {
+          try {
+            const resp = await authFetch(`${API_BASE}/items`, {
+              method: 'POST',
+              body: JSON.stringify({
+                entry_date: new Date().toISOString().split('T')[0],
+                product_name: item.name,
+                quantity: Number(item.qty) || 0,
+                unit_cost: Number(item.unit_cost) || 0,
+                notes: item.notes || '',
+              }),
+            });
+            if (resp.ok) pushed++;
+          } catch { /* keep going */ }
+        }
+
+        syncStatusEl.textContent = `Pulled ${items.length} rows from Sheet, synced ${pushed} to Neon.`;
       } catch (err) { syncStatusEl.textContent = `Error: ${err.message}`; }
     });
 
