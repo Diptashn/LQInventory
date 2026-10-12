@@ -95,7 +95,9 @@ if (window.location.pathname.endsWith('inventory.html') || window.location.pathn
       // Attach event listeners to buttons
       document.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-          const id = parseInt(e.target.dataset.id);
+          // IDs may be numeric (local) or UUID strings (pulled from Neon) —
+          // do NOT parseInt, that yields NaN for UUIDs.
+          const id = e.target.dataset.id;
           if (confirm('Hapus bahan ini?')) {
             InventoryService.remove(id);
             renderItems(searchInput.value);
@@ -105,8 +107,8 @@ if (window.location.pathname.endsWith('inventory.html') || window.location.pathn
 
       document.querySelectorAll('.edit-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-          const id = parseInt(e.target.dataset.id);
-          const item = InventoryService.getAll().find(i => i.id === id);
+          const id = e.target.dataset.id;
+          const item = InventoryService.getAll().find(i => String(i.id) === String(id));
           if (!item) return;
 
           // Prompt for new values (simple prompt for demo)
@@ -159,39 +161,78 @@ if (window.location.pathname.endsWith('estimate.html')) {
 // Sheets sync logic
 if (window.location.pathname.endsWith('sheets.html')) {
   document.addEventListener('DOMContentLoaded', () => {
-    // Sheets sync UI – call Apps Script endpoints directly
-    const token = "Lilquin_Inventory_2026";
-    const scriptUrl = "https://script.google.com/macros/s/AKfycbx5AW9mM-I_M3v7pDcAxjZg-fdhBvpKP6MPDYYPi4oEqVF_qvfbKCA-L95fyZ1XTyCKjw/exec";
+    // Vercel API base – replace the dead Apps Script URL
+    const API_BASE = "https://lq-inventory.vercel.app/api";
 
     const tokenStatusEl = document.getElementById('token-status');
     const syncStatusEl = document.getElementById('sync-status');
-    // simple check: fetch with token only – should return error if token missing
-    fetch(`${scriptUrl}?token=${token}`).then(r => r.json()).then(data => {
-        tokenStatusEl.textContent = data.error ? 'Invalid' : 'OK';
-    }).catch(() => { tokenStatusEl.textContent = 'Error'; });
 
-    document.getElementById('sync-s2db').addEventListener('click', async () => {
-        syncStatusEl.textContent = 'Pulling…';
-        const resp = await fetch(`${scriptUrl}?token=${token}&action=getInventory`);
-        const json = await resp.json();
-        if (json.inventory) {
-            syncStatusEl.textContent = `Pulled ${json.inventory.length} rows`;
+    // --- connection check: a plain GET /api/items is our health probe now ---
+    fetch(`${API_BASE}/items`)
+      .then(r => r.json())
+      .then(data => {
+        if (typeof data.count === 'number') {
+          tokenStatusEl.textContent = 'OK';
         } else {
-            syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`;
+          tokenStatusEl.textContent = 'Invalid';
         }
+      })
+      .catch(() => { tokenStatusEl.textContent = 'Error'; });
+
+    // --- PULL: Neon -> localStorage ---
+    document.getElementById('sync-s2db').addEventListener('click', async () => {
+      syncStatusEl.textContent = 'Pulling…';
+      try {
+        const resp = await fetch(`${API_BASE}/items`);
+        const json = await resp.json();
+        if (!json.data) {
+          syncStatusEl.textContent = `Error: ${json.error || 'unknown'}`;
+          return;
+        }
+        // Map DB column names -> localStorage item shape
+        const mapped = json.data.map(row => ({
+          id: row.id,
+          name: row.product_name,
+          qty: Number(row.quantity),
+          unit_cost: Number(row.unit_cost),
+          updated_at: row.created_at || row.entry_date,
+        }));
+        InventoryService.saveAll(mapped);
+        syncStatusEl.textContent = `Pulled ${mapped.length} rows (${json.count} from server)`;
+      } catch (err) {
+        syncStatusEl.textContent = `Error: ${err.message}`;
+      }
     });
 
+    // --- PUSH: localStorage -> Neon (one POST per row) ---
     document.getElementById('sync-db2s').addEventListener('click', async () => {
-        syncStatusEl.textContent = 'Pushing…';
-        const inventory = InventoryService.getAll();
-        const payload = { inventory };
-        const resp = await fetch(`${scriptUrl}?token=${token}`, {
+      syncStatusEl.textContent = 'Pushing…';
+      const items = InventoryService.getAll();
+      if (items.length === 0) {
+        syncStatusEl.textContent = 'Nothing to push (localStorage empty)';
+        return;
+      }
+      try {
+        let ok = 0, failed = 0;
+        for (const item of items) {
+          const body = {
+            entry_date: (item.updated_at || new Date().toISOString()).slice(0, 10),
+            product_name: item.name,
+            quantity: Number(item.qty),
+            unit_cost: Number(item.unit_cost),
+            notes: '',
+          };
+          const resp = await fetch(`${API_BASE}/items`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-        });
-        const json = await resp.json();
-        syncStatusEl.textContent = json.status ? `Pushed ${json.rows || json.inventory?.length || 0} rows` : `Error: ${json.error}`;
+            body: JSON.stringify(body),
+          });
+          if (resp.ok) ok++; else failed++;
+        }
+        syncStatusEl.textContent = `Pushed ${ok} rows` + (failed ? `, ${failed} failed` : '');
+      } catch (err) {
+        syncStatusEl.textContent = `Error: ${err.message}`;
+      }
     });
 
     console.log('Sheets page loaded');
