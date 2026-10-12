@@ -63,7 +63,7 @@ function hargaPerGram(hargaKg) { return (hargaKg / 1000).toFixed(2); }
 
 // ── Inventory page ───────────────────────────────────────────────────────
 if (location.pathname.endsWith('inventory.html') || location.pathname === '/' || (location.pathname.endsWith('.html') === false && location.pathname.includes('inventory'))) {
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', async () => {
     if (!requireAuthOrRedirect()) return;
 
     const form      = document.getElementById('add-form');
@@ -71,68 +71,102 @@ if (location.pathname.endsWith('inventory.html') || location.pathname === '/' ||
     const emptyState = document.getElementById('empty-state');
     const searchInput = document.getElementById('search');
 
-    function renderItems(filter = '') {
-      const items = InventoryService.getAll().filter(i => i.name.toLowerCase().includes(filter.toLowerCase()));
+    async function renderItems(filter = '') {
+      const all = await InventoryService.getAll();
+      const items = all.filter(i => (i.product_name || i.name || '').toLowerCase().includes(filter.toLowerCase()));
       if (!items.length) { emptyState.classList.remove('hidden'); itemsBody.innerHTML = ''; return; }
       emptyState.classList.add('hidden');
-      itemsBody.innerHTML = items.map(item => `
+      itemsBody.innerHTML = items.map(item => {
+        const name  = item.product_name || item.name;
+        const qty   = Number(item.quantity ?? item.qty) || 0;
+        const cost  = Number(item.unit_cost) || 0;
+        const itemId = item.id;
+        return `
         <tr>
-          <td class="p-3"><strong>${escapeHtml(item.name)}</strong></td>
-          <td class="p-3 text-right">${item.qty.toFixed(2)} g</td>
-          <td class="p-3 text-right">Rp ${formatCurrency(item.unit_cost)}</td>
-          <td class="p-3 text-right">Rp ${formatCurrency(parseFloat(item.unit_cost) / 1000)}</td>
-          <td class="p-3 text-sm text-stone-500">${new Date(item.updated_at || Date.now()).toLocaleDateString('id-ID')}</td>
+          <td class="p-3"><strong>${escapeHtml(name)}</strong></td>
+          <td class="p-3 text-right">${qty.toFixed(2)} g</td>
+          <td class="p-3 text-right">Rp ${formatCurrency(cost)}</td>
+          <td class="p-3 text-right">Rp ${formatCurrency(cost / 1000)}</td>
+          <td class="p-3 text-sm text-stone-500">${new Date(item.created_at || item.updated_at || Date.now()).toLocaleDateString('id-ID')}</td>
           <td class="p-3 text-center space-x-2">
-            <button class="edit-btn px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600" data-id="${item.id}">Edit</button>
-            <button class="delete-btn px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600" data-id="${item.id}">Hapus</button>
+            <button class="edit-btn px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600" data-id="${itemId}">Edit</button>
+            <button class="delete-btn px-2 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600" data-id="${itemId}">Hapus</button>
           </td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
 
       document.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          const idStr = e.target.dataset.id;
-          // id in localStorage is numeric; dataset.id is string → loose compare
-          if (confirm('Hapus bahan ini?')) { InventoryService.remove(Number(idStr)); renderItems(searchInput.value); }
+        btn.addEventListener('click', async (e) => {
+          const id = e.target.dataset.id;
+          if (!confirm('Hapus bahan ini?')) return;
+          try {
+            await InventoryService.remove(id);
+            await renderItems(searchInput.value);
+          } catch (err) { alert('Gagal hapus: ' + err.message); }
         });
       });
+
       document.querySelectorAll('.edit-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', async (e) => {
           const id = e.target.dataset.id;
-          const item = InventoryService.getAll().find(i => String(i.id) === String(id));
+          const item = all.find(i => String(i.id) === String(id));
           if (!item) return;
-          const rawName = prompt('Nama bahan:', item.name) || item.name;
-          const name = sentenceCase(rawName);
-          const qty  = parseFloat(prompt('Qty (grams):', item.qty)) || item.qty;
-          const unit_cost = parseFloat(prompt('Harga /kg (Rp):', item.unit_cost)) || item.unit_cost;
-          if (name !== null && !isNaN(qty) && !isNaN(unit_cost)) {
-            InventoryService.update(id, { name, qty: parseFloat(qty), unit_cost: parseFloat(unit_cost) });
-            renderItems(searchInput.value);
-          }
+          const name = item.product_name || item.name;
+          const qty  = Number(item.quantity ?? item.qty) || 0;
+          const cost = Number(item.unit_cost) || 0;
+
+          const rawName = prompt('Nama bahan:', name);
+          if (rawName === null) return;                    // user cancelled
+          const newQty  = prompt('Qty (grams):', qty);
+          if (newQty === null) return;
+          const newCost = prompt('Harga /kg (Rp):', cost);
+          if (newCost === null) return;
+
+          const normName = sentenceCase(rawName);
+          const nq = parseFloat(newQty), nc = parseFloat(newCost);
+          if (!normName || isNaN(nq) || isNaN(nc)) { alert('Input tidak valid'); return; }
+
+          try {
+            await InventoryService.update(id, { product_name: normName, quantity: nq, unit_cost: nc });
+            await renderItems(searchInput.value);
+          } catch (err) { alert('Gagal update: ' + err.message); }
         });
       });
     }
 
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
-      const name = form.name.value.trim();
-      const normName = sentenceCase(name);
-      const qty = parseFloat(form.qty.value);
-      const unit_cost = parseFloat(form.unit_cost.value);
-      if (name && !isNaN(qty) && !isNaN(unit_cost) && qty > 0 && unit_cost > 0) {
-        // Case-insensitive duplicate check: update the existing row instead of adding a new one
-        const existing = InventoryService.getAll().find(i => i.name.toLowerCase() === normName.toLowerCase());
-        if (existing) {
-          InventoryService.update(existing.id, { name: normName, qty, unit_cost, updated_at: new Date().toISOString() });
-        } else {
-          InventoryService.add({ name: normName, qty, unit_cost, updated_at: new Date().toISOString() });
-        }
-        form.reset();
-        renderItems(searchInput.value);
-      } else { alert('Mohon isi semua field dengan nilai yang valid'); }
-    });
+    form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const name = form.name.value.trim();
+          const normName = sentenceCase(name);
+          const qty = parseFloat(form.qty.value);
+          const unit_cost = parseFloat(form.unit_cost.value);
+          if (!name || isNaN(qty) || isNaN(unit_cost) || qty <= 0 || unit_cost <= 0) {
+            alert('Mohon isi semua field dengan nilai yang valid');
+            return;
+          }
 
-    searchInput.addEventListener('input', (e) => renderItems(e.target.value));
-    renderItems('');
+          const submitBtn = form.querySelector('button[type="submit"]');
+          submitBtn.disabled = true;
+          try {
+            // Case-insensitive dedupe happens server-side via ON CONFLICT lower(product_name)
+            await InventoryService.add({
+              entry_date: new Date().toISOString().split('T')[0],
+              product_name: normName,
+              quantity: qty,
+              unit_cost,
+              notes: '',
+            });
+            form.reset();
+            await renderItems(searchInput.value);
+          } catch (err) {
+            alert('Gagal menyimpan: ' + err.message);
+          } finally {
+            submitBtn.disabled = false;
+          }
+        });
+
+        searchInput.addEventListener('input', async (e) => await renderItems(e.target.value));
+        await renderItems('');
   });
 }
 
@@ -215,40 +249,6 @@ if (location.pathname.endsWith('sheets.html')) {
         else { tokenStatusEl.textContent = 'Invalid'; syncStatusEl.textContent = data.error || 'auth required'; }
       })
       .catch(() => { tokenStatusEl.textContent = 'Error'; syncStatusEl.textContent = 'Connection failed'; });
-
-    // --- PULL: Google Sheet → localStorage → Neon ---
-    document.getElementById('sync-s2db').addEventListener('click', async () => {
-      syncStatusEl.textContent = 'Pulling from Google Sheet…';
-      try {
-        // Step 1: fetch data from Google Sheet (server-side, needs Google creds)
-        const sheetResp = await authFetch(`${API_BASE}/export-to-sheet?read=true`, { method: 'GET' });
-        const sheetJson = await sheetResp.json();
-        if (!sheetJson.success) { syncStatusEl.textContent = `Sheet read error: ${sheetJson.error || 'unknown'}`; return; }
-
-        const items = sheetJson.rows;
-        InventoryService.saveAll(items);
-
-        // Step 2: push each sheet row to Neon so both sides match
-        let pushed = 0;
-        for (const item of items) {
-          try {
-            const resp = await authFetch(`${API_BASE}/items`, {
-              method: 'POST',
-              body: JSON.stringify({
-                entry_date: new Date().toISOString().split('T')[0],
-                product_name: item.name,
-                quantity: Number(item.qty) || 0,
-                unit_cost: Number(item.unit_cost) || 0,
-                notes: item.notes || '',
-              }),
-            });
-            if (resp.ok) pushed++;
-          } catch { /* keep going */ }
-        }
-
-        syncStatusEl.textContent = `Pulled ${items.length} rows from Sheet, synced ${pushed} to Neon.`;
-      } catch (err) { syncStatusEl.textContent = `Error: ${err.message}`; }
-    });
 
     // --- Export Neon → Google Sheets (one‑click) ---
     document.getElementById('export-to-sheets').addEventListener('click', async () => {
