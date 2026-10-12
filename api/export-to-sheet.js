@@ -6,9 +6,12 @@
 //
 // Chain: Neon  <--this endpoint-->  Google Sheets
 //
-// Auth: the desktop OAuth token at /opt/data/profiles/developer/google_token.json
-// only works for interactive localhost flows, so we mint our own JWT access
-// token with the client_id/client_secret already on disk.
+// Auth: we accept either:
+//   (a) Files on disk (dev): /opt/data/profiles/developer/google_*.json
+//   (b) Vercel env vars: GOOGLE_CLIENT_SECRET_JSON, GOOGLE_TOKEN_JSON
+//
+// The desktop OAuth token includes a refresh_token, so we can mint a fresh
+// access token with the client secret.
 
 const { Client } = require('pg');
 const { google } = require('googleapis');
@@ -16,44 +19,49 @@ const { google } = require('googleapis');
 // ── config ───────────────────────────────────────────────────────────────
 const SHEET_ID = '1wA5WN0evR5VpMujKphfY7441T80bEz6OjH0EOnOW1JA';
 const DEFAULT_TAB = 'Inventory';
-const CRED_PATH = '/opt/data/profiles/developer/google_client_secret.json';
-const TOKEN_PATH = '/opt/data/profiles/developer/google_token.json';
 
 // ── helpers ──────────────────────────────────────────────────────────────
-function readJson(path) {
+function loadJsonFromEnvOrFile(envVar, fallbackPath) {
+  const raw = process.env[envVar];
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      console.warn(`Failed to parse ${envVar} as JSON, falling back to file`);
+    }
+  }
   const fs = require('fs');
-  return JSON.parse(fs.readFileSync(path, 'utf8'));
+  return JSON.parse(fs.readFileSync(fallbackPath, 'utf8'));
 }
 
 async function getGoogleAuth() {
-  const secret = readJson(CRED_PATH).installed;
+  const secret = loadJsonFromEnvOrFile(
+    'GOOGLE_CLIENT_SECRET_JSON',
+    '/opt/data/profiles/developer/google_client_secret.json'
+  ).installed;
+
+  const tokenObj = loadJsonFromEnvOrFile(
+    'GOOGLE_TOKEN_JSON',
+    '/opt/data/profiles/developer/google_token.json'
+  );
+
   const oauth2Client = new google.auth.OAuth2(
     secret.client_id,
     secret.client_secret,
-    'http://localhost' // redirect uri is irrelevant for grant_type=refresh_token
+    'http://localhost' // redirect uri irrelevant for refresh_token grant
   );
 
-  // Try the stored refresh token first.
-  try {
-    const token = readJson(TOKEN_PATH);
-    if (token.refresh_token) {
-      oauth2Client.setCredentials({ refresh_token: token.refresh_token });
-      await oauth2Client.refreshAccessToken();
-      return oauth2Client;
-    }
-  } catch (e) {
-    // fall through to JWT minting
+  // If we have a refresh_token, use it; else the tokenObj must already be valid.
+  if (tokenObj.refresh_token) {
+    oauth2Client.setCredentials({ refresh_token: tokenObj.refresh_token });
+    await oauth2Client.refreshAccessToken();
+    return oauth2Client;
   }
 
-  // No refresh token → sign a JWT with the client secret.
-  // The desktop client_secret is the same key Google accepts for JWT signing.
-  const jwtClient = new google.auth.JWT({
-    email: secret.client_id,
-    key: secret.client_secret,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-  await jwtClient.authorize();
-  return jwtClient;
+  // No refresh_token: assume tokenObj already has a valid access_token.
+  // Build credentials from tokenObj (access_token, expiry, etc).
+  const creds = google.auth.fromJSON(tokenObj);
+  return creds;
 }
 
 async function getSheetsTab(auth, tabName) {
