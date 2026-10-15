@@ -1,8 +1,13 @@
 // DELETE /api/users/:username - delete user (super admin only)
-import { createClient } from '../_db.js';
-import { requireAuth } from '../auth.js';
+const { createClient } = require('../_db.js');
+const { requireAuth } = require('../auth.js');
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
   if (req.method !== 'DELETE') {
     res.setHeader('Allow', 'DELETE');
     return res.status(405).json({ error: 'Method not allowed' });
@@ -43,4 +48,4 @@ export default async function handler(req, res) {
   } finally {
     await client.end();
   }
-}
+};

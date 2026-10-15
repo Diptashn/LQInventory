@@ -1,24 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 /*
- * LilQuin Kitchen — shared styles
- * Imported once by every page. Tailwind utilities do the heavy lifting;
- * only project-specific tweaks live here.
+ * LilQuin Kitchen — shared design system & styles
+ * Tailored palette, typography, and interactive micro-animations.
  */
 
 :root {
   --brand: #b4602e;
-  --brand-dark: #8a4520;
+  --brand-hover: #984c1f;
+  --brand-dark: #7a3a16;
+  --brand-light: #fdf8f4;
+  --brand-ring: rgba(180, 96, 46, 0.25);
+  --stone-bg: #f7f6f4;
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  background-color: var(--stone-bg);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Thin scrollbars inside scrollable panels */
+/* Smooth transitions */
+a, button, input, select {
+  transition: all 0.15s ease-in-out;
+}
+
+/* Focus styles */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--brand) !important;
+  box-shadow: 0 0 0 3px var(--brand-ring) !important;
+}
+
+/* Thin scrollbars */
 .scroll-slim::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
+}
+.scroll-slim::-webkit-scrollbar-track {
+  background: transparent;
 }
 .scroll-slim::-webkit-scrollbar-thumb {
   background: #d6c9bd;
   border-radius: 999px;
+}
+.scroll-slim::-webkit-scrollbar-thumb:hover {
+  background: #b8a696;
+}
+
+/* Table row polish */
+tbody tr {
+  transition: background-color 0.12s ease;
+}
+tbody tr:hover {
+  background-color: #faf8f6;
+}
+
+/* Toast notifications */
+.toast-notice {
+  animation: slideInDown 0.25s ease-out;
+}
+
+@keyframes slideInDown {
+  from {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }

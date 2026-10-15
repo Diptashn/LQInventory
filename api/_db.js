@@ -1,9 +1,11 @@
 // api/_db.js – shared Neon Postgres client factory
-import { Client } from 'pg';
+const { Client } = require('pg');
 
-export function createClient() {
+function createClient() {
   return new Client({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false },
   });
 }
+
+module.exports = { createClient };

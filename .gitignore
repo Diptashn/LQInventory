@@ -1,11 +1,24 @@
 # dependencies
 node_modules/
+.venv/
+.venv-export/
 
 # build output
 dist/
+*.egg-info/
+build/
 
-# local data
+# local databases and data
+*.db
 data/inventory.json
+
+# environment variables
+.env
+!.env.example
+
+# backup and scratch files
+*.bak*
+tmp/
 
 # IDE
 .vscode/
@@ -16,9 +29,9 @@ data/inventory.json
 # OS
 .DS_Store
 Thumbs.db
+
 # Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# Export venv (build artifact, not committable)
-.venv-export/

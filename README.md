@@ -45,20 +45,26 @@ Copy `inventory.db` into the backend directory before syncing from the DB.
 ## Layout
 
 ```
-index.html           home (section picker)
-inventory.html       inventory CRUD (localStorage)
-estimate.html        estimate input (localStorage-backed)
-sheets.html          Sheets sync status page
-assets/css/          tailwind.css (source), styles.css (project tweaks)
-assets/js/app.js     all client-side logic (ES module)
-assets/images/       logo
-data/inventory.json  snapshot export from the old SQLite DB
-config.json          site config (sheet id, feature flags)
-app/                 optional FastAPI backend
+index.html               Dashboard (quick access & overview)
+login.html               Authentication portal with redirect support
+inventory.html           Inventory CRUD (Neon DB API + local fallback)
+estimate.html            COGS & ingredient estimate calculations
+sheets.html              Google Sheets export & sync status
+admin.html               Super Admin user management (dipta only)
+assets/css/styles.css    Design system tokens, typography, & UI utilities
+assets/js/
+  app.js                 Main router & client entrypoint
+  modules/               api.js (services), auth.js (JWT & guards), utils.js (helpers)
+  pages/                 Page controllers (inventory, estimate, sheets, admin)
+public/                  Static assets (favicon.ico, /images/logo.jpg)
+api/                     Vercel serverless API endpoints (items, auth, estimate, export)
+app/                     Optional FastAPI backend for Sheets bidirectional sync
+scripts/                 Database migration and verification scripts
 ```
 
 ## Notes
 
 * No `hx-*` attributes, no HTMX, no Jinja2 syntax in any HTML file.
 * All asset paths are relative (`assets/…`) so the site works from any subpath.
-* No hard-coded hosts (`localhost`, `127.0.0.1`, tunnel domains) anywhere.
+* Modular client-side architecture with Vite bundling and offline resilience.
+

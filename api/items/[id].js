@@ -1,12 +1,12 @@
 // api/items/[id].js – single‑item routes (GET, PUT, DELETE) – JWT protected
-const { Client } = require('pg');
+const { createClient } = require('../_db.js');
 const { requireAuth } = require('../auth');
 
 module.exports = async (req, res) => {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   // Auth guard
@@ -16,10 +16,7 @@ module.exports = async (req, res) => {
   const { id } = req.query; // Vercel passes dynamic segment as query param
   if (!id) return res.status(400).json({ error: 'Missing id' });
 
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+  const client = createClient();
   try {
     await client.connect();
     if (req.method === 'GET') {

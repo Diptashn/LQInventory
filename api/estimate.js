@@ -5,7 +5,7 @@
 // Auth: JWT required.
 
 const { OAuth2Client } = require('google-auth-library');
-const { Client } = require('pg');
+const { createClient } = require('./_db.js');
 const { requireAuth } = require('./auth');
 
 // Reuse helper functions from export-to-sheet (duplicate for simplicity).
@@ -65,10 +65,7 @@ module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method not allowed' });
 
   // Keep one transaction open across both writes so a Sheets failure rolls back Neon.
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+  const client = createClient();
 
   try {
     await client.connect();

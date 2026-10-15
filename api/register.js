@@ -1,30 +1,28 @@
 // api/register.js
 // POST /api/register – create a new user (must be called with a valid JWT in Authorization header)
 const bcrypt = require('bcryptjs');
-const { Client } = require('pg');
+const { createClient } = require('./_db.js');
 const { verify } = require('./auth');
 
 module.exports = async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+
   // Auth check – only logged‑in users may register new accounts
   const auth = verify(req.headers.authorization?.replace('Bearer ', '') || '');
   if (!auth) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
     return res.status(401).json({ error: 'unauthorized' });
   }
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') return res.status(200).end();
-
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { username, password } = req.body;
+  const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Missing username or password' });
 
   // Check if user already exists
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+  const client = createClient();
 
   try {
     await client.connect();

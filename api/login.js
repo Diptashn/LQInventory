@@ -1,28 +1,25 @@
 // api/login.js – POST /api/login – login & issue JWT token
 // In plain Vercel serverless (no Express) we set the cookie via response header.
 const bcrypt = require('bcryptjs');
-const { Client } = require('pg');
+const { createClient } = require('./_db.js');
 const { sign } = require('./auth');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { username, password } = req.body;
+  const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ error: 'Missing username or password' });
   }
 
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+  const client = createClient();
 
   try {
     await client.connect();

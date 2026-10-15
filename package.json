@@ -16,6 +16,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.7",
+    "google-auth-library": "^9.14.2",
     "googleapis": "^185.0.0",
     "pg": "^8.23.1"
   }

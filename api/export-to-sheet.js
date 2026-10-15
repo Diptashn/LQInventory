@@ -17,7 +17,7 @@
 //   clear=true|false – clear the target tab before writing (default true)
 //   tab=NAME         – custom tab name (default 'Inventory')
 
-const { Client } = require('pg');
+const { createClient } = require('./_db.js');
 const { OAuth2Client } = require('google-auth-library');
 const { requireAuth } = require('./auth');
 
@@ -160,10 +160,7 @@ module.exports = async (req, res) => {
   }
 
   // ── full pipeline: Neon → Google Sheet (original behaviour) ──────────────
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+  const client = createClient();
 
   try {
     await client.connect();

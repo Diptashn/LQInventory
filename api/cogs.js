@@ -1,20 +1,17 @@
 // api/cogs.js – protected monthly COGS aggregate
-const { Client } = require('pg');
+const { createClient } = require('./_db.js');
 const { requireAuth } = require('./auth');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const auth = requireAuth(req, res);
   if (!auth) return;
 
-  const client = new Client({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false },
-  });
+  const client = createClient();
   try {
     await client.connect();
     const { month } = req.query;
